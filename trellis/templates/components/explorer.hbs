@@ -1,0 +1,218 @@
+{{! Rootz Explorer, rendered server-side and hydrated by explorer.inline.js }}
+<button
+  type="button"
+  id="overlay-explorer-button"
+  class="overlay-explorer-toggle mobile-only"
+  aria-controls="overlay-explorer-content"
+  data-olsavestate="{{explorer.use_saved_state}}"
+  data-behavior="{{explorer.folder_click_behavior}}"
+  data-collapsed="{{explorer.folder_default_state}}"
+>
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="5 8 14 8"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  >
+    <polyline points="6 6 18 6"></polyline>
+    <polyline points="6 12 18 12"></polyline>
+    <polyline points="6 18 18 18"></polyline>
+  </svg>
+</button>
+
+<div id="overlay-explorer-container" aria-hidden="true">
+  <div id="overlay-explorer-space">
+    <div id="overlay-explorer-content">
+      <h2 style="margin: 0;">{{explorer.title}}</h2>
+
+      <ul id="overlay-explorer-ul">
+        {{#if nav}}
+          {{#each nav}}
+            <li>
+              {{#if children}}
+                <div
+                  class="ol-folder-entry"
+                  data-ol-selector-for="{{path}}/index"
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="12"
+                    height="12"
+                    viewBox="5 8 14 8"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    class="ol-folder-icon"
+                  >
+                    <polyline points="6 9 12 15 18 9"></polyline>
+                  </svg>
+                  <button class="ol-folder-button"><span
+                      class="ol-folder-title"
+                    >{{title}}</span></button>
+                </div>
+                <div
+                  class="ol-folder-outer"
+                  data-ol-children-for="{{path}}/index"
+                >
+                  <ul style="padding-left: 1.4rem">
+                    {{#each children}}
+                      <li><a href="/{{path}}">{{title}}</a></li>
+                    {{/each}}
+                  </ul>
+                </div>
+              {{else}}
+                <a href="/{{path}}">{{title}}</a>
+              {{/if}}
+            </li>
+          {{/each}}
+        {{/if}}
+      </ul>
+    </div>
+  </div>
+</div>
+<div
+  class="explorer"
+  data-behavior="{{explorer.folder_click_behavior}}"
+  data-collapsed="{{explorer.folder_default_state}}"
+  data-savestate="{{explorer.use_saved_state}}"
+  data-data-fns="{{explorer.data_fns_json}}"
+  aria-expanded="false"
+>
+  <button
+    type="button"
+    class="explorer-toggle mobile-explorer hide-until-loaded"
+    data-mobile="true"
+    aria-controls="{{explorer.id}}"
+  >
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      class="lucide-menu"
+    >
+      <line x1="4" x2="20" y1="12" y2="12" />
+      <line x1="4" x2="20" y1="6" y2="6" />
+      <line x1="4" x2="20" y1="18" y2="18" />
+    </svg>
+  </button>
+
+  <button
+    type="button"
+    class="title-button explorer-toggle desktop-explorer"
+    data-mobile="false"
+    aria-expanded="true"
+  >
+    <h2>{{explorer.title}}</h2>
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="14"
+      height="14"
+      viewBox="5 8 14 8"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      class="fold"
+    >
+      <polyline points="6 9 12 15 18 9"></polyline>
+    </svg>
+  </button>
+
+  <div
+    id="{{explorer.id}}"
+    class="explorer-content"
+    aria-expanded="false"
+    role="group"
+  >
+    <ul class="explorer-ul overflow">
+      {{#if nav}}
+        {{#each nav}}
+          {{#if children}}
+            <li>
+              <div class="folder-container" data-folderpath="{{path}}/index">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="14"
+                  height="14"
+                  viewBox="5 8 14 8"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  class="folder-icon"
+                >
+                  <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
+                <div>
+                  <button class="folder-button" type="button">
+                    <span class="folder-title">{{title}}</span>
+                  </button>
+                </div>
+              </div>
+              <div class="folder-outer">
+                <ul class="content">
+                  {{#each children}}
+                    <li><a class="internal" href="/{{path}}">{{title}}</a></li>
+                  {{/each}}
+                </ul>
+              </div>
+            </li>
+          {{/if}}
+        {{/each}}
+
+        {{#each nav}}
+          {{#unless children}}
+            <li><a class="internal" href="/{{path}}">{{title}}</a></li>
+          {{/unless}}
+        {{/each}}
+      {{/if}}
+      <li class="overflow-end"></li>
+    </ul>
+  </div>
+
+  <template id="template-file">
+    <li>
+      <a href="#"></a>
+    </li>
+  </template>
+
+  <template id="template-folder">
+    <li>
+      <div class="folder-container">
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="14"
+          height="14"
+          viewBox="5 8 14 8"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          class="folder-icon"
+        >
+          <polyline points="6 9 12 15 18 9"></polyline>
+        </svg>
+        <div>
+          <button class="folder-button" type="button">
+            <span class="folder-title"></span>
+          </button>
+        </div>
+      </div>
+      <div class="folder-outer">
+        <ul class="content"></ul>
+      </div>
+    </li>
+  </template>
+</div>

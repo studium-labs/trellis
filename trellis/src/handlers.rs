@@ -9,11 +9,12 @@ use serde::Serialize;
 use serde_json::json;
 use serde_yaml;
 use std::fs;
+use std::io;
 
 use crate::trellis::cache;
 use crate::trellis::config::{google_font_href, theme_css_variables};
 use crate::trellis::types::{RenderedPage, slug_from_path};
-use crate::trellis::{RootzEngine, SiteConfig};
+use crate::trellis::{SiteConfig, TrellisEngine};
 use chrono::{Datelike, Utc};
 use grass;
 use std::collections::BTreeMap;
@@ -39,8 +40,6 @@ pub async fn js_handler(path: web::Path<String>) -> impl Responder {
     let Some(path) = resolve_js_path(&tail) else {
         return HttpResponse::NotFound().finish();
     };
-    println!("READING PATH: {:?}", &path);
-
     match std::fs::read_to_string(&path) {
         Ok(body) => HttpResponse::Ok()
             .insert_header((CONTENT_TYPE, "application/javascript"))
@@ -74,9 +73,9 @@ fn resolve_js_path(tail: &str) -> Option<PathBuf> {
     None
 }
 
-fn quartz_engine() -> &'static RootzEngine {
-    static ENGINE: OnceLock<RootzEngine> = OnceLock::new();
-    ENGINE.get_or_init(|| RootzEngine::new(SiteConfig::load()).expect("init quartz engine"))
+fn quartz_engine() -> &'static TrellisEngine {
+    static ENGINE: OnceLock<TrellisEngine> = OnceLock::new();
+    ENGINE.get_or_init(|| TrellisEngine::new(SiteConfig::load()).expect("init quartz engine"))
 }
 
 #[get("/")]
@@ -85,6 +84,9 @@ pub async fn home_handler(hb: web::Data<Handlebars<'static>>) -> impl Responder 
     let page = match engine.render_page("index") {
         Ok(page) => page,
         Err(err) => {
+            if err.to_string().contains("page filtered out by plugins") {
+                return HttpResponse::NotFound().finish();
+            }
             log::error!("failed to render page: {}", err);
             placeholder_page()
         }
@@ -96,9 +98,22 @@ pub async fn home_handler(hb: web::Data<Handlebars<'static>>) -> impl Responder 
 
 async fn render_slug(slug: String, hb: web::Data<Handlebars<'static>>) -> impl Responder {
     let engine = quartz_engine();
+    if !engine.page_exists(&slug) {
+        return HttpResponse::NotFound().finish();
+    }
     let page = match engine.render_page(&slug) {
         Ok(page) => page,
         Err(err) => {
+            if err.to_string().contains("page filtered out by plugins") {
+                return HttpResponse::NotFound().finish();
+            }
+            let not_found = err
+                .downcast_ref::<io::Error>()
+                .map(|e| e.kind() == io::ErrorKind::NotFound)
+                .unwrap_or(false);
+            if not_found {
+                return HttpResponse::NotFound().finish();
+            }
             log::error!("failed to render page {}: {}", slug, err);
             placeholder_page()
         }
@@ -142,7 +157,7 @@ fn render(
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 struct NavItem {
     title: String,
     path: String,
@@ -150,7 +165,7 @@ struct NavItem {
     children: Option<Vec<NavLeaf>>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 struct NavLeaf {
     title: String,
     path: String,
@@ -218,9 +233,9 @@ struct LayoutContext<'a> {
     list: &'a crate::trellis::layout::PageLayout,
 }
 
-fn build_home_context<'a>(engine: &'a RootzEngine, page: RenderedPage) -> HomeContext<'a> {
+fn build_home_context<'a>(engine: &'a TrellisEngine, page: RenderedPage) -> HomeContext<'a> {
     let article = to_article(&page);
-    let nav = build_nav_from_content();
+    let nav = build_nav_from_content(&engine.config);
     let styles = compiled_styles(&engine.config);
     let fonts_href = google_font_href(&engine.config.configuration.theme);
     let footer = footer_context(&engine.config);
@@ -290,13 +305,72 @@ fn links_from_config(links: &BTreeMap<String, String>) -> Option<Vec<FooterLink>
     )
 }
 
-fn build_nav_from_content() -> Vec<NavItem> {
-    let content_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../content");
+fn build_nav_from_content(config: &SiteConfig) -> Vec<NavItem> {
+    let content_root =
+        resolve_path(Path::new(env!("CARGO_MANIFEST_DIR")), &config.paths.content_root);
+    let latest = latest_mtime_recursive(&content_root, &config.configuration.ignore_patterns);
+
+    static NAV_CACHE: OnceLock<RwLock<NavCache>> = OnceLock::new();
+    let cache = NAV_CACHE.get_or_init(|| {
+        RwLock::new(NavCache {
+            mtime: SystemTime::UNIX_EPOCH,
+            nav: Vec::new(),
+        })
+    });
+
+    if let Ok(guard) = cache.read() {
+        if guard.mtime >= latest {
+            return guard.nav.clone();
+        }
+    }
+
+    let nav = compute_nav(&content_root, &config.configuration.ignore_patterns);
+
+    if let Ok(mut guard) = cache.write() {
+        // Only replace if fresher; avoids races with concurrent builders
+        if latest >= guard.mtime {
+            guard.mtime = latest;
+            guard.nav = nav.clone();
+        }
+    }
+
+    nav
+}
+
+struct NavCache {
+    mtime: SystemTime,
+    nav: Vec<NavItem>,
+}
+
+fn latest_mtime_recursive(root: &Path, ignore_patterns: &[String]) -> SystemTime {
+    let mut newest = fs::metadata(root)
+        .and_then(|m| m.modified())
+        .unwrap_or(SystemTime::UNIX_EPOCH);
+
+    for entry in WalkDir::new(root)
+        .into_iter()
+        .filter_entry(|e| !is_ignored(e.path(), root, ignore_patterns))
+        .filter_map(Result::ok)
+    {
+        if let Ok(meta) = entry.metadata() {
+            if let Ok(modified) = meta.modified() {
+                if modified > newest {
+                    newest = modified;
+                }
+            }
+        }
+    }
+
+    newest
+}
+
+fn compute_nav(content_root: &Path, ignore_patterns: &[String]) -> Vec<NavItem> {
     let mut groups: std::collections::BTreeMap<String, Vec<String>> =
         std::collections::BTreeMap::new();
 
-    for entry in WalkDir::new(&content_root)
+    for entry in WalkDir::new(content_root)
         .into_iter()
+        .filter_entry(|e| !is_ignored(e.path(), content_root, ignore_patterns))
         .filter_map(Result::ok)
         .filter(|e| e.path().is_file())
     {
@@ -310,7 +384,7 @@ fn build_nav_from_content() -> Vec<NavItem> {
             continue;
         }
 
-        let mut slug = slug_from_path(entry.path(), &content_root);
+        let mut slug = slug_from_path(entry.path(), content_root);
         if slug.ends_with("/index") {
             slug.truncate(slug.len() - "/index".len());
         }
@@ -344,7 +418,7 @@ fn build_nav_from_content() -> Vec<NavItem> {
                 children
                     .iter()
                     .map(|slug| NavLeaf {
-                        title: title_for_file(slug, &content_root),
+                        title: title_for_file(slug, content_root),
                         path: slug.clone(),
                     })
                     .collect(),
@@ -352,9 +426,9 @@ fn build_nav_from_content() -> Vec<NavItem> {
         };
 
         let title = if children.is_some() {
-            title_for_folder(&group, &content_root)
+            title_for_folder(&group, content_root)
         } else {
-            title_for_file(&group, &content_root)
+            title_for_file(&group, content_root)
         };
 
         nav.push(NavItem {
@@ -415,6 +489,28 @@ fn frontmatter_title(path: &Path) -> Option<String> {
 
 fn humanize_segment(segment: &str) -> String {
     segment.replace('-', " ")
+}
+
+fn is_ignored(path: &Path, root: &Path, patterns: &[String]) -> bool {
+    let Ok(rel) = path.strip_prefix(root) else {
+        return false;
+    };
+
+    rel.components().any(|comp| {
+        comp.as_os_str()
+            .to_str()
+            .map(|s| patterns.iter().any(|p| p == s))
+            .unwrap_or(false)
+    })
+}
+
+fn resolve_path(base: &Path, path: &str) -> PathBuf {
+    let candidate = PathBuf::from(path);
+    if candidate.is_absolute() {
+        candidate
+    } else {
+        base.join(path)
+    }
 }
 
 fn to_article(page: &RenderedPage) -> ArticleContext {
@@ -575,24 +671,22 @@ pub fn config(conf: &mut web::ServiceConfig) {
     slugs.sort();
     slugs.dedup();
 
-    let mut site_scope = web::scope("")
+    let site_scope = web::scope("")
         .service(home_handler)
         .service(feed_handler)
         .service(error_handler)
         .service(explorer_script_handler)
-        .service(js_handler);
-
-    for slug in slugs.into_iter().filter(|s| !s.is_empty() && s != "index") {
-        let path = format!("/{}", slug);
-        let slug_clone = slug.clone();
-        site_scope = site_scope.route(
-            path.as_str(),
-            web::get().to(move |hb: web::Data<Handlebars<'static>>| {
-                let slug = slug_clone.clone();
-                async move { render_slug(slug, hb).await }
-            }),
+        .service(js_handler)
+        // Catch-all route keeps in sync with content changes without restart
+        .route(
+            "/{slug:.*}",
+            web::get().to(
+                move |path: web::Path<String>, hb: web::Data<Handlebars<'static>>| {
+                    let slug = path.into_inner().trim_matches('/').to_string();
+                    async move { render_slug(slug, hb).await }
+                },
+            ),
         );
-    }
 
     conf.service(api_scope);
     conf.service(site_scope);

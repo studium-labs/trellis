@@ -2,9 +2,31 @@ use std::path::Path;
 
 use confik::{Configuration, EnvSource};
 use serde::{Deserialize, Serialize};
+use serde_json;
+use sha2::{Digest, Sha256};
 
 use self::yaml::YamlFileSource;
 use crate::trellis::layout::LayoutConfig;
+
+fn default_host() -> String {
+    "0.0.0.0".into()
+}
+
+fn default_port() -> u16 {
+    40075
+}
+
+fn default_max_payload_mb() -> usize {
+    100
+}
+
+fn default_content_root() -> String {
+    "../content".into()
+}
+
+fn default_cache_root() -> String {
+    "../.build".into()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Configuration)]
 pub struct ThemeFonts {
@@ -70,6 +92,52 @@ pub struct GlobalConfiguration {
 
 fn default_date_type_modified() -> DefaultDateType {
     DefaultDateType::Modified
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Configuration)]
+pub struct ServerConfig {
+    #[serde(default = "default_host")]
+    pub host: String,
+    #[serde(default = "default_port")]
+    pub port: u16,
+    #[serde(default)]
+    pub cors_origins: Vec<String>,
+    #[serde(default = "default_max_payload_mb")]
+    pub max_payload_mb: usize,
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            host: default_host(),
+            port: default_port(),
+            cors_origins: vec!["0.0.0.0:40075".into()],
+            max_payload_mb: default_max_payload_mb(),
+        }
+    }
+}
+
+impl ServerConfig {
+    pub fn max_payload_bytes(&self) -> usize {
+        self.max_payload_mb.saturating_mul(1024 * 1024)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Configuration)]
+pub struct PathsConfig {
+    #[serde(default = "default_content_root")]
+    pub content_root: String,
+    #[serde(default = "default_cache_root")]
+    pub cache_root: String,
+}
+
+impl Default for PathsConfig {
+    fn default() -> Self {
+        Self {
+            content_root: default_content_root(),
+            cache_root: default_cache_root(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Configuration)]
@@ -166,6 +234,10 @@ pub struct SiteConfig {
     pub configuration: GlobalConfiguration,
     pub layout: LayoutConfig,
     pub plugins: PluginConfig,
+    #[serde(default)]
+    pub server: ServerConfig,
+    #[serde(default)]
+    pub paths: PathsConfig,
 }
 
 impl Default for SiteConfig {
@@ -217,6 +289,8 @@ impl Default for SiteConfig {
             },
             layout: LayoutConfig::default(),
             plugins: PluginConfig::default(),
+            server: ServerConfig::default(),
+            paths: PathsConfig::default(),
         }
     }
 }
@@ -318,6 +392,12 @@ pub fn theme_css_variables(theme: &ThemeConfig) -> String {
         sans = DEFAULT_SANS,
         mono = DEFAULT_MONO
     )
+}
+
+/// Stable hash of the active theme configuration, used for cache busting.
+pub fn theme_hash(theme: &ThemeConfig) -> String {
+    let json = serde_json::to_string(theme).unwrap_or_default();
+    format!("{:x}", Sha256::digest(json.as_bytes()))
 }
 
 fn join_segments(base: &str, tail: &str) -> String {

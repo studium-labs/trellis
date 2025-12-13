@@ -2,3 +2,4 @@ target/
 static/
 .build/
 zref/
+trellis.db

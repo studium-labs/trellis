@@ -11,10 +11,6 @@ Trellis is currently pre-alpha and we can't yet recommend using this project ser
 
 [Join the Trellis Discord](https://discord.gg/J6J8szStkd)
 
-> One who works with the door open gets all kinds of interruptions, but they also occasionally gets clues as to what the world is and what might be important.
->
-> ~ Richard Hamming
-
 ## Thank you Quartz Creators!
 
 Quartz is the original inspiration and the author(s) of lots of styling and HTML code found in this project. Check them out to learn who/what inspired me to build the Rust version!
@@ -22,3 +18,7 @@ Quartz is the original inspiration and the author(s) of lots of styling and HTML
 - https://quartz.jzhao.xyz/
 - https://github.com/jackyzha0/quartz
 - [Join the Quartz Discord](https://discord.gg/cRFFHYye7t)
+
+> One who works with the door open gets all kinds of interruptions, but they also occasionally gets clues as to what the world is and what might be important.
+>
+> ~ Richard Hamming

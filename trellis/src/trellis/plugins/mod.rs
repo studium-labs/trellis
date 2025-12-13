@@ -23,6 +23,7 @@ impl PluginRegistry {
     pub fn bare_minimum() -> Self {
         Self {
             transformers: vec![
+                // Order matters: FrontMatter must run first so filters can see metadata
                 Box::new(FrontMatter),
                 Box::new(MarkdownRenderer),
                 Box::new(EncryptContent),
@@ -36,11 +37,26 @@ impl PluginRegistry {
         self
     }
 
-    pub fn transform(&self, mut page: Page) -> Result<Page> {
-        for transformer in &self.transformers {
-            page = transformer.transform(page)?;
+    /// Run transformers in order while honoring filters.
+    ///
+    /// Filters are evaluated after the first transformer (FrontMatter) has
+    /// populated metadata/frontmatter so they can read flags like `draft`.
+    /// Returns `Ok(None)` when a filter excludes the page.
+    pub fn transform(&self, mut page: Page) -> Result<Option<Page>> {
+        // Run the first transformer (expected to be FrontMatter) before filters
+        if let Some((first, rest)) = self.transformers.split_first() {
+            page = first.transform(page)?;
+
+            if !self.allow(&page) {
+                return Ok(None);
+            }
+
+            for transformer in rest {
+                page = transformer.transform(page)?;
+            }
         }
-        Ok(page)
+
+        Ok(Some(page))
     }
 
     pub fn allow(&self, page: &Page) -> bool {

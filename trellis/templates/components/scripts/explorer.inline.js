@@ -1,7 +1,7 @@
 import { FileTrieNode } from "/js/util/fileTrie";
 import { resolveRelative, simplifySlug } from "/js/util/path";
 
-// Rootz renders without the SPA router, so `window.addCleanup` can be undefined.
+// Trellis renders without the SPA router, so `window.addCleanup` can be undefined.
 const registerCleanup =
   typeof window !== "undefined" && typeof window.addCleanup === "function"
     ? window.addCleanup
@@ -301,12 +301,15 @@ function applyStateToServerTree(explorer, opts) {
     setFolderState(folderOuter, shouldCollapse);
 
     if (!saved) {
-      currentExplorerState.push({ path: folderPath, collapsed: shouldCollapse });
+      currentExplorerState.push({
+        path: folderPath,
+        collapsed: shouldCollapse,
+      });
     }
   }
 }
 
-// In Rootz (non-SPA) the `nav` event is never emitted, so hydrate once on load.
+// In Trellis (non-SPA) the `nav` event is never emitted, so hydrate once on load.
 if (!registerCleanup) {
   const hydrateExplorer = () => {
     const currentSlug = window.location.pathname.slice(1) || "index";

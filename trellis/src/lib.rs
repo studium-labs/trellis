@@ -1,71 +1,112 @@
 pub mod handlers;
 pub mod trellis;
-use std::io;
+use std::{env, io};
 
 use actix_cors::Cors;
 use actix_web::{App, HttpServer, http::header, middleware::Logger, web};
-use futures_util::future::BoxFuture;
 use handlebars::Handlebars;
-use log::{error, info};
+use log::info;
 
 use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
 use std::ffi::OsStr;
 use std::fs;
 use std::path::Path;
+use tokio::fs::File;
 use walkdir::WalkDir;
 
-pub fn db_pool() -> BoxFuture<'static, SqlitePool> {
-    let attempts = 0;
-    Box::pin(async move {
-        // debug!("Connecting to PostgreSQL using URI: {}", &cfg.database_url);
-        match SqlitePoolOptions::new().connect("studium.db").await {
-            Ok(pool) => {
-                info!("SQLite connection found!");
-                pool
-            }
-            Err(err) => {
-                let attempts = attempts + 1;
-                error!(
-                    "Error connecting to db pool, {:?} attempts failed. error: {}:",
-                    attempts, err
-                );
-                return db_pool().await;
+use crate::trellis::config::SiteConfig;
+
+pub async fn db_pool() -> anyhow::Result<SqlitePool> {
+    // Allow override via env (works for deployments that supply DATABASE_URL)
+    let url = env::var("DATABASE_URL")
+        .or_else(|_| env::var("TRELLIS_DATABASE_URL"))
+        .unwrap_or_else(|_| {
+            let mut path = env::current_dir().expect("cwd");
+            path.push("trellis.db");
+            // SQLx expects three slashes for an absolute path (sqlite:///...)
+            // otherwise it treats it as relative and the connection can fail.
+            format!("sqlite://{}", path.display())
+        });
+
+    // If we're pointing at a file-based SQLite DB, ensure the file exists
+    // so SQLx doesn't return code 14 ("unable to open database file").
+    if let Some(db_path) = sqlite_path_from_url(&url) {
+        if let Some(parent) = db_path.parent() {
+            if !parent.exists() {
+                tokio::fs::create_dir_all(parent).await?;
             }
         }
-    })
+        if tokio::fs::metadata(&db_path).await.is_err() {
+            File::create(&db_path).await?;
+        }
+    }
+
+    info!("Opening SQLite at {}", url);
+    let pool = SqlitePoolOptions::new().connect(&url).await?;
+    Ok(pool)
+}
+
+/// Extract a filesystem path from a sqlite URL of the form sqlite://<abs path>.
+/// Returns None for in-memory or non-sqlite schemes.
+fn sqlite_path_from_url(url: &str) -> Option<std::path::PathBuf> {
+    const PREFIX: &str = "sqlite://";
+    if !url.starts_with(PREFIX) {
+        return None;
+    }
+    let rest = &url[PREFIX.len()..];
+    // Ignore in-memory and other special SQLite URLs.
+    if rest.starts_with(':') {
+        return None;
+    }
+    Some(std::path::PathBuf::from(rest))
 }
 
 pub async fn run() -> io::Result<()> {
+    let config = SiteConfig::load();
+    let server_cfg = config.server.clone();
+
     info!(
         "studium.dev is listening on: http://{}:{}",
-        "0.0.0.0", 40075
+        server_cfg.host, server_cfg.port
     );
     // Build the shared Handlebars registry once for all workers.
     let handlebars = web::Data::new(build_handlebars());
 
+    let pool = db_pool().await.expect("unable to connect to sqlite db!");
+    let max_bytes = server_cfg.max_payload_bytes();
+    let cors_origins = server_cfg.cors_origins.clone();
+
     HttpServer::new(move || {
         // Set payload limit based on configuration (affects multipart and others)
-        let max_mb = 100;
-        let max_bytes = (max_mb as usize).saturating_mul(1024 * 1024);
-        let pool = db_pool();
         App::new()
             .wrap(Logger::default())
-            .app_data(web::Data::new(pool))
+            .app_data(web::Data::new(pool.clone()))
             .app_data(handlebars.clone())
             .app_data(web::PayloadConfig::new(max_bytes))
             // .app_data(web::Data::new())
-            .wrap(
-                Cors::default()
-                    .allowed_origin("0.0.0.0:40075")
-                    .allowed_methods(vec!["GET", "POST", "PATCH", "DELETE"])
-                    .allowed_headers(vec![header::CONTENT_TYPE, header::ACCEPT])
-                    .supports_credentials(),
-            )
+            .wrap(build_cors(&cors_origins))
             .configure(handlers::config)
     })
-    .bind(("0.0.0.0", 40075))?
+    .bind((server_cfg.host.as_str(), server_cfg.port))?
     .run()
     .await
+}
+
+fn build_cors(origins: &[String]) -> Cors {
+    let base = Cors::default()
+        .allowed_methods(vec!["GET", "POST", "PATCH", "DELETE"])
+        .allowed_headers(vec![header::CONTENT_TYPE, header::ACCEPT]);
+
+    if origins.iter().any(|o| o == "*") {
+        return base.allow_any_origin();
+    }
+
+    let cors = origins
+        .iter()
+        .fold(base, |c, origin| c.allowed_origin(origin));
+
+    // Maintain previous behavior of allowing credentials when specific origins are set.
+    cors.supports_credentials()
 }
 
 fn build_handlebars() -> Handlebars<'static> {

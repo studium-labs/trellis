@@ -1,6 +1,6 @@
 import { registerEscapeHandler, removeAllChildren } from "./util";
 
-// Rootz renders without the SPA router in some modes, so addCleanup may be
+// Trellis renders without the SPA router in some modes, so addCleanup may be
 // undefined. Provide a no-op fallback so event cleanup calls don't explode.
 const registerCleanup =
   typeof window !== "undefined" && typeof window.addCleanup === "function"

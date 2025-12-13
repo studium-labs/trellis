@@ -74,3 +74,27 @@ pub fn newest_mtime_with_extension(dir: &Path, ext: &str) -> io::Result<SystemTi
 
     Ok(newest)
 }
+
+/// Write or refresh a marker file containing the provided hash and return its mtime.
+/// This lets callers include semantic hashes as cache dependencies without parsing HTML.
+pub fn update_hash_marker(cache_root: &Path, name: &str, hash: &str) -> io::Result<SystemTime> {
+    let marker = cache_root.join(format!(".{name}_hash"));
+    let mut needs_write = true;
+
+    if let Ok(existing) = fs::read_to_string(&marker) {
+        if existing.trim() == hash {
+            needs_write = false;
+        }
+    }
+
+    if needs_write {
+        if let Some(parent) = marker.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&marker, hash)?;
+    }
+
+    fs::metadata(&marker)
+        .and_then(|m| m.modified())
+        .or(Ok(SystemTime::UNIX_EPOCH))
+}

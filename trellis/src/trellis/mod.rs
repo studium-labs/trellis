@@ -7,5 +7,5 @@ pub mod types;
 
 pub use config::SiteConfig;
 pub use layout::{default_content_page_layout, default_list_page_layout, shared_layout};
-pub use renderer::RootzEngine;
+pub use renderer::TrellisEngine;
 pub use types::{PageContext, RenderedPage};

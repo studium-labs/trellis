@@ -41,9 +41,7 @@ pub struct EncryptContent;
 
 impl Transformer for EncryptContent {
     fn transform(&self, mut page: Page) -> Result<Page> {
-        println!("in EncryptContent transformer 1 {:?}", &page.frontmatter);
         let Some(password_val) = &page.frontmatter.password else {
-            println!("in EncryptContent transformer 2");
             return Ok(page);
         };
 
@@ -51,7 +49,6 @@ impl Transformer for EncryptContent {
 
         let Some(plaintext_html) = &page.html else {
             // We expect MarkdownRenderer to run before this transformer.
-            println!("in EncryptContent transformer 3");
             return Ok(page);
         };
 
@@ -114,7 +111,6 @@ impl Transformer for EncryptContent {
         let word_count = plaintext_html.split_whitespace().count() as u64;
         page.frontmatter.word_count = Some(word_count);
         page.frontmatter.encrypted = Some(true);
-        println!("in EncryptContent transformer 4");
 
         page.html = Some(format!(
             r#"<div class="encrypted-note" data-ciphertext="{ciphertext}" data-salt="{salt}" data-nonce="{nonce}" data-iterations="{iterations}" data-algo="AES-256-GCM" data-kdf="PBKDF2-SHA256" data-version="1">

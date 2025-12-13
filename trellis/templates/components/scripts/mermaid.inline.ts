@@ -2,22 +2,24 @@ import { registerEscapeHandler, removeAllChildren } from "./util";
 
 // Trellis renders without the SPA router in some modes, so addCleanup may be
 // undefined. Provide a no-op fallback so event cleanup calls don't explode.
-const registerCleanup =
+const registerCleanup: (fn: () => void) => void =
   typeof window !== "undefined" && typeof window.addCleanup === "function"
     ? window.addCleanup
     : () => {};
 
 class DiagramPanZoom {
   isDragging = false;
-  startPan = { x: 0, y: 0 };
-  currentPan = { x: 0, y: 0 };
+  startPan: { x: number; y: number } = { x: 0, y: 0 };
+  currentPan: { x: number; y: number } = { x: 0, y: 0 };
   scale = 1;
-  MIN_SCALE = 0.5;
-  MAX_SCALE = 3;
+  readonly MIN_SCALE = 0.5;
+  readonly MAX_SCALE = 3;
 
-  cleanups = [];
+  cleanups: Array<() => void> = [];
+  private container: HTMLElement;
+  private content: HTMLElement;
 
-  constructor(container, content) {
+  constructor(container: HTMLElement, content: HTMLElement) {
     this.container = container;
     this.content = content;
     this.setupEventListeners();
@@ -25,7 +27,7 @@ class DiagramPanZoom {
     this.resetTransform();
   }
 
-  setupEventListeners() {
+  setupEventListeners(): void {
     // Mouse drag events
     const mouseDownHandler = this.onMouseDown.bind(this);
     const mouseMoveHandler = this.onMouseMove.bind(this);
@@ -63,13 +65,13 @@ class DiagramPanZoom {
     );
   }
 
-  cleanup() {
+  cleanup(): void {
     for (const cleanup of this.cleanups) {
       cleanup();
     }
   }
 
-  setupNavigationControls() {
+  setupNavigationControls(): void {
     const controls = document.createElement("div");
     controls.className = "mermaid-controls";
 
@@ -85,7 +87,7 @@ class DiagramPanZoom {
     this.container.appendChild(controls);
   }
 
-  createButton(text, onClick) {
+  createButton(text: string, onClick: () => void): HTMLButtonElement {
     const button = document.createElement("button");
     button.textContent = text;
     button.className = "mermaid-control-button";
@@ -94,7 +96,7 @@ class DiagramPanZoom {
     return button;
   }
 
-  onMouseDown(e) {
+  onMouseDown(e: MouseEvent): void {
     if (e.button !== 0) return; // Only handle left click
     this.isDragging = true;
     this.startPan = {
@@ -104,7 +106,7 @@ class DiagramPanZoom {
     this.container.style.cursor = "grabbing";
   }
 
-  onMouseMove(e) {
+  onMouseMove(e: MouseEvent): void {
     if (!this.isDragging) return;
     e.preventDefault();
 
@@ -116,12 +118,12 @@ class DiagramPanZoom {
     this.updateTransform();
   }
 
-  onMouseUp() {
+  onMouseUp(): void {
     this.isDragging = false;
     this.container.style.cursor = "grab";
   }
 
-  onTouchStart(e) {
+  onTouchStart(e: TouchEvent): void {
     if (e.touches.length !== 1) return;
     this.isDragging = true;
     const touch = e.touches[0];
@@ -131,7 +133,7 @@ class DiagramPanZoom {
     };
   }
 
-  onTouchMove(e) {
+  onTouchMove(e: TouchEvent): void {
     if (!this.isDragging || e.touches.length !== 1) return;
     e.preventDefault(); // Prevent scrolling
 
@@ -144,11 +146,11 @@ class DiagramPanZoom {
     this.updateTransform();
   }
 
-  onTouchEnd() {
+  onTouchEnd(): void {
     this.isDragging = false;
   }
 
-  zoom(delta) {
+  zoom(delta: number): void {
     const newScale = Math.min(
       Math.max(this.scale + delta, this.MIN_SCALE),
       this.MAX_SCALE
@@ -167,12 +169,13 @@ class DiagramPanZoom {
     this.updateTransform();
   }
 
-  updateTransform() {
+  updateTransform(): void {
     this.content.style.transform = `translate(${this.currentPan.x}px, ${this.currentPan.y}px) scale(${this.scale})`;
   }
 
-  resetTransform() {
+  resetTransform(): void {
     const svg = this.content.querySelector("svg");
+    if (!svg) return;
     const rect = svg.getBoundingClientRect();
     const width = rect.width / this.scale;
     const height = rect.height / this.scale;
@@ -186,7 +189,7 @@ class DiagramPanZoom {
   }
 }
 
-const cssVars = [
+const cssVars: readonly string[] = [
   "--secondary",
   "--tertiary",
   "--gray",
@@ -198,27 +201,28 @@ const cssVars = [
   "--codeFont",
 ];
 
-let mermaidImport = undefined;
+let mermaidImport: { default: any } | undefined;
 
-async function hydrateMermaid() {
-  const center = document.querySelector(".center");
+async function hydrateMermaid(): Promise<void> {
+  const center = document.querySelector<HTMLElement>(".center");
   if (!center) return;
 
-  const nodes = center.querySelectorAll("code.mermaid");
+  const nodes = center.querySelectorAll<HTMLElement>("code.mermaid");
   if (nodes.length === 0) return;
 
   mermaidImport ||= await import(
     // @ts-ignore
     "https://cdnjs.cloudflare.com/ajax/libs/mermaid/11.4.0/mermaid.esm.min.mjs"
   );
+  if (!mermaidImport) return;
   const mermaid = mermaidImport.default;
 
-  const textMapping = new WeakMap();
+  const textMapping = new WeakMap<HTMLElement, string>();
   for (const node of nodes) {
     textMapping.set(node, node.innerText);
   }
 
-  async function renderMermaid() {
+  async function renderMermaid(): Promise<void> {
     // de-init any other diagrams
     for (const node of nodes) {
       node.removeAttribute("data-processed");
@@ -228,12 +232,15 @@ async function hydrateMermaid() {
       }
     }
 
-    const computedStyleMap = cssVars.reduce((acc, key) => {
-      acc[key] = window
-        .getComputedStyle(document.documentElement)
-        .getPropertyValue(key);
-      return acc;
-    }, {});
+    const computedStyleMap = cssVars.reduce<Record<string, string>>(
+      (acc, key) => {
+        acc[key] = window
+          .getComputedStyle(document.documentElement)
+          .getPropertyValue(key);
+        return acc;
+      },
+      {}
+    );
 
     const darkMode =
       document.documentElement.getAttribute("saved-theme") === "dark";
@@ -265,20 +272,22 @@ async function hydrateMermaid() {
 
   for (let i = 0; i < nodes.length; i++) {
     const codeBlock = nodes[i];
-    const pre = codeBlock.parentElement;
+    const pre = codeBlock.parentElement as HTMLElement | null;
     if (!pre) continue;
 
-    const clipboardBtn = pre.querySelector(".clipboard-button");
+    const clipboardBtn =
+      pre.querySelector<HTMLButtonElement>(".clipboard-button");
     const expandBtn =
-      pre.querySelector(".expand-button") || createExpandButton(pre);
+      pre.querySelector<HTMLButtonElement>(".expand-button") ||
+      createExpandButton(pre);
 
     const clipboardStyle = clipboardBtn
       ? window.getComputedStyle(clipboardBtn)
       : null;
     const clipboardWidth = clipboardBtn
       ? clipboardBtn.offsetWidth +
-        parseFloat(clipboardStyle.marginLeft || "0") +
-        parseFloat(clipboardStyle.marginRight || "0")
+        parseFloat(clipboardStyle?.marginLeft ?? "0") +
+        parseFloat(clipboardStyle?.marginRight ?? "0")
       : 0;
 
     // Set expand button position
@@ -286,23 +295,29 @@ async function hydrateMermaid() {
     pre.prepend(expandBtn);
 
     // query popup container
-    const popupContainer = pre.querySelector("#mermaid-container");
+    const popupContainer =
+      pre.querySelector<HTMLDivElement>("#mermaid-container");
     if (!popupContainer) continue;
+    const popupContainerEl = popupContainer; // narrowed non-null
 
-    let panZoom = null;
+    let panZoom: DiagramPanZoom | null = null;
     function showMermaid() {
-      const container = popupContainer.querySelector("#mermaid-space");
-      const content = popupContainer.querySelector(".mermaid-content");
-      if (!content) return;
+      const container =
+        popupContainerEl.querySelector<HTMLDivElement>("#mermaid-space");
+      const content =
+        popupContainerEl.querySelector<HTMLDivElement>(".mermaid-content");
+      if (!container || !content) return;
       removeAllChildren(content);
 
       // Clone the mermaid content
-      const mermaidContent = codeBlock.querySelector("svg")?.cloneNode(true);
+      const mermaidContent = codeBlock
+        .querySelector("svg")
+        ?.cloneNode(true) as SVGElement | null;
       if (!mermaidContent) return;
       content.appendChild(mermaidContent);
 
       // Show container
-      popupContainer.classList.add("active");
+      popupContainerEl.classList.add("active");
       container.style.cursor = "grab";
 
       // Initialize pan-zoom after showing the popup
@@ -310,13 +325,13 @@ async function hydrateMermaid() {
     }
 
     function hideMermaid() {
-      popupContainer.classList.remove("active");
+      popupContainerEl.classList.remove("active");
       panZoom?.cleanup();
       panZoom = null;
     }
 
     expandBtn.addEventListener("click", showMermaid);
-    registerEscapeHandler(popupContainer, hideMermaid);
+    registerEscapeHandler(popupContainerEl, hideMermaid);
 
     registerCleanup(() => {
       panZoom?.cleanup();
@@ -325,7 +340,7 @@ async function hydrateMermaid() {
   }
 }
 
-function createExpandButton(pre) {
+function createExpandButton(pre: HTMLElement): HTMLButtonElement {
   const btn = document.createElement("button");
   btn.className = "expand-button";
   btn.setAttribute("aria-label", "Expand mermaid diagram");
@@ -337,10 +352,18 @@ function createExpandButton(pre) {
 
 // Initial hydration for SSR/non-SPA load.
 if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", hydrateMermaid, { once: true });
+  document.addEventListener(
+    "DOMContentLoaded",
+    () => {
+      hydrateMermaid();
+    },
+    { once: true }
+  );
 } else {
   hydrateMermaid();
 }
 
 // Hydrate on SPA nav events.
-document.addEventListener("nav", hydrateMermaid);
+document.addEventListener("nav", () => {
+  hydrateMermaid();
+});

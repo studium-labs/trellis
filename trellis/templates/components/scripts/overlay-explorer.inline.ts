@@ -1,10 +1,34 @@
-import { FileTrieNode } from "/js/util/fileTrie";
-import { resolveRelative, simplifySlug } from "/js/util/path";
-import { registerEscapeHandler } from "/js/components/scripts/util.js";
+import { FileTrieNode, type ContentEntry } from "../../util/fileTrie";
+import { resolveRelative, simplifySlug, type FullSlug } from "../../util/path";
+import { registerEscapeHandler } from "./util";
 
-function setFolder(folderPath, open) {
-  const children = document.querySelector(`[data-ol-children-for='${folderPath}']`);
-  const entry = document.querySelector(`[data-ol-selector-for='${folderPath}']`);
+declare const fetchData: Promise<Record<string, ContentEntry>> | undefined;
+
+type ExplorerClickBehavior = "collapse" | "link" | "mixed";
+type ExplorerDefaultState = "collapsed" | "open";
+
+type ExplorerOptions = {
+  folderClickBehavior: ExplorerClickBehavior;
+  folderDefaultState: ExplorerDefaultState;
+  useSavedState: boolean;
+};
+
+type ContentNode = FileTrieNode<ContentEntry>;
+
+// Trellis renders without the SPA router, so `window.addCleanup` can be undefined.
+const registerCleanup =
+  typeof window !== "undefined" &&
+  typeof (window as any).addCleanup === "function"
+    ? (window as any).addCleanup
+    : null;
+
+function setFolder(folderPath: string, open: boolean) {
+  const children = document.querySelector(
+    `[data-ol-children-for='${folderPath}']`
+  );
+  const entry = document.querySelector(
+    `[data-ol-selector-for='${folderPath}']`
+  );
   if (!children || !entry) return;
   const icon = entry.querySelector("svg");
   if (!icon) return;
@@ -12,12 +36,30 @@ function setFolder(folderPath, open) {
   icon.classList.toggle("open", open);
 }
 
-function buildNode(node, currentSlug, opts, folderPath = "") {
+function sortChildren(children: ContentNode[]): ContentNode[] {
+  return [...children].sort((a, b) => {
+    if (a.isFolder && !b.isFolder) return -1;
+    if (!a.isFolder && b.isFolder) return 1;
+    return a.displayName.localeCompare(b.displayName, undefined, {
+      numeric: true,
+      sensitivity: "base",
+    });
+  });
+}
+
+function buildNode(
+  node: ContentNode,
+  currentSlug: FullSlug,
+  opts: ExplorerOptions,
+  folderPath = ""
+): HTMLLIElement {
   const li = document.createElement("li");
 
   if (node.isFolder) {
-    const fullPath = node.slug || folderPath;
-    const selectorPath = fullPath.endsWith("/") ? fullPath + "index" : `${fullPath}/index`;
+    const fullPath = (node.slug || folderPath || "index") as FullSlug;
+    const selectorPath = fullPath.endsWith("/")
+      ? fullPath + "index"
+      : `${fullPath}/index`;
 
     const entry = document.createElement("div");
     entry.className = "ol-folder-entry";
@@ -67,9 +109,11 @@ function buildNode(node, currentSlug, opts, folderPath = "") {
     outer.className = "ol-folder-outer";
     outer.dataset.olChildrenFor = selectorPath;
     const ul = document.createElement("ul");
-    ul.style.paddingLeft = node.name !== "" ? "1.4rem" : "0";
+    const hasName = node.slugSegment !== "";
+    ul.style.paddingLeft = hasName ? "1.4rem" : "0";
 
-    for (const child of node.children) {
+    const sortedChildren = sortChildren(node.children as ContentNode[]);
+    for (const child of sortedChildren) {
       ul.appendChild(buildNode(child, currentSlug, opts, fullPath));
     }
 
@@ -77,14 +121,15 @@ function buildNode(node, currentSlug, opts, folderPath = "") {
     li.appendChild(outer);
 
     const shouldOpen =
-      opts.folderDefaultState === "open" || simplifySlug(fullPath).startsWith(currentSlug);
+      opts.folderDefaultState === "open" ||
+      simplifySlug(fullPath as FullSlug).startsWith(currentSlug);
     if (shouldOpen) {
       outer.classList.add("open");
       icon.classList.add("open");
     }
   } else {
     const a = document.createElement("a");
-    a.href = resolveRelative(currentSlug, node.slug);
+    a.href = resolveRelative(currentSlug, node.slug as FullSlug);
     a.textContent = node.displayName;
     li.appendChild(a);
   }
@@ -92,24 +137,40 @@ function buildNode(node, currentSlug, opts, folderPath = "") {
   return li;
 }
 
-function attachFolderToggles(root, useSaveState) {
-  const map = useSaveState
-    ? new Map(JSON.parse(localStorage.getItem("olFileTree") || "[]"))
-    : new Map();
+function attachFolderToggles(root: Element, useSaveState: boolean) {
+  const map: Map<string, boolean> = useSaveState
+    ? new Map(
+        JSON.parse(localStorage.getItem("olFileTree") || "[]") as [
+          string,
+          boolean
+        ][]
+      )
+    : new Map<string, boolean>();
 
   const save = () => {
     if (useSaveState) {
-      localStorage.setItem("olFileTree", JSON.stringify(Array.from(map.entries())));
+      localStorage.setItem(
+        "olFileTree",
+        JSON.stringify(Array.from(map.entries()))
+      );
     }
   };
 
-  const toggle = (evt) => {
-    evt.stopPropagation();
-    const target = evt.currentTarget;
-    const selector = target.closest("[data-ol-selector-for]")?.dataset.olSelectorFor;
+  const toggle = (evt: Event) => {
+    const mouseEvt = evt as MouseEvent;
+    mouseEvt.stopPropagation();
+    const target = mouseEvt.currentTarget as HTMLElement;
+    const selectorTarget = target.closest<HTMLElement>(
+      "[data-ol-selector-for]"
+    );
+    const selector = selectorTarget?.dataset?.olSelectorFor;
     if (!selector) return;
-    const children = document.querySelector(`[data-ol-children-for='${selector}']`);
-    const icon = document.querySelector(`[data-ol-selector-for='${selector}'] .ol-folder-icon`);
+    const children = document.querySelector<HTMLElement>(
+      `[data-ol-children-for='${selector}']`
+    );
+    const icon = document.querySelector<SVGElement>(
+      `[data-ol-selector-for='${selector}'] .ol-folder-icon`
+    );
     if (!children || !icon) return;
     const open = !children.classList.contains("open");
     children.classList.toggle("open", open);
@@ -118,10 +179,12 @@ function attachFolderToggles(root, useSaveState) {
     save();
   };
 
-  root.querySelectorAll(".ol-folder-icon, .ol-folder-button").forEach((el) => {
-    el.addEventListener("click", toggle);
-    window.addCleanup?.(() => el.removeEventListener("click", toggle));
-  });
+  root
+    .querySelectorAll<HTMLElement>(".ol-folder-icon, .ol-folder-button")
+    .forEach((el) => {
+      el.addEventListener("click", toggle);
+      registerCleanup?.(() => el.removeEventListener("click", toggle));
+    });
 
   // Restore saved state
   for (const [folder, open] of map.entries()) {
@@ -130,27 +193,36 @@ function attachFolderToggles(root, useSaveState) {
 }
 
 async function hydrateOverlayExplorer() {
-  const openButton = document.getElementById("overlay-explorer-button");
+  const openButton = document.getElementById(
+    "overlay-explorer-button"
+  ) as HTMLButtonElement | null;
   const container = document.getElementById("overlay-explorer-container");
   const list = document.getElementById("overlay-explorer-ul");
   if (!openButton || !container || !list) return;
 
-  const opts = {
-    folderClickBehavior: openButton.dataset.behavior || "mixed",
-    folderDefaultState: openButton.dataset.collapsed || "collapsed",
+  const opts: ExplorerOptions = {
+    folderClickBehavior:
+      (openButton.dataset.behavior as ExplorerClickBehavior) || "mixed",
+    folderDefaultState:
+      (openButton.dataset.collapsed as ExplorerDefaultState) || "collapsed",
     useSavedState: openButton.dataset.olsavestate === "true",
   };
 
-  const currentSlug = (window.location.pathname || "/").replace(/^\//, "") || "index";
+  const currentSlug = ((window.location.pathname || "/").replace(/^\//, "") ||
+    "index") as FullSlug;
 
   // Rebuild list from content index if available
   if (typeof fetchData !== "undefined") {
     try {
       const data = await fetchData;
-      const trie = FileTrieNode.fromEntries([...Object.entries(data)]);
+      const trie = FileTrieNode.fromEntries([...Object.entries(data)] as [
+        string,
+        ContentEntry
+      ][]);
       list.replaceChildren();
-      for (const child of trie.children) {
-        list.appendChild(buildNode(child, currentSlug, opts));
+      const sortedChildren = sortChildren(trie.children as ContentNode[]);
+      for (const child of sortedChildren) {
+        list.appendChild(buildNode(child as ContentNode, currentSlug, opts));
       }
     } catch (err) {
       console.warn("Overlay explorer: failed to load content index", err);
@@ -172,7 +244,7 @@ async function hydrateOverlayExplorer() {
     };
 
     openButton.addEventListener("click", show);
-    window.addCleanup?.(() => openButton.removeEventListener("click", show));
+    registerCleanup?.(() => openButton.removeEventListener("click", show));
 
     registerEscapeHandler(container, hide);
     openButton.dataset.overlayReady = "true";
@@ -180,9 +252,19 @@ async function hydrateOverlayExplorer() {
 }
 
 if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", hydrateOverlayExplorer, { once: true });
+  document.addEventListener(
+    "DOMContentLoaded",
+    () => {
+      hydrateOverlayExplorer();
+    },
+    {
+      once: true,
+    }
+  );
 } else {
   hydrateOverlayExplorer();
 }
 
-document.addEventListener("nav", hydrateOverlayExplorer);
+document.addEventListener("nav", () => {
+  hydrateOverlayExplorer();
+});

@@ -34,7 +34,6 @@ impl Transformer for FrontMatter {
             let parsed: HashMap<String, serde_yaml::Value> =
                 serde_yaml::from_str(&yaml_str).context("parsing frontmatter")?;
 
-            println!("PARSED: {:?}", parsed);
             let mut meta = PageMetadata::default();
 
             if let Some(serde_yaml::Value::String(title)) = parsed.get("title") {

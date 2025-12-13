@@ -2,7 +2,21 @@ const GLYPHS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789#$%&*+<>=?@^_~";
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
-function glyphLine(length = 48) {
+type DecodePlanStep = {
+  stable: boolean;
+  target: string;
+  settleAt?: number;
+  noise?: number;
+};
+
+type EncryptedDataset = DOMStringMap & {
+  salt: string;
+  nonce: string;
+  ciphertext: string;
+  iterations?: string;
+};
+
+function glyphLine(length = 48): string {
   const len = Math.max(24, Math.min(260, length));
   let out = "";
   for (let i = 0; i < len; i++) {
@@ -11,7 +25,7 @@ function glyphLine(length = 48) {
   return out;
 }
 
-function glyphFromCipher(ciphertext = "") {
+function glyphFromCipher(ciphertext = ""): string {
   if (!ciphertext) return glyphLine();
 
   const chars = [];
@@ -23,7 +37,7 @@ function glyphFromCipher(ciphertext = "") {
   return chars.join("");
 }
 
-function b64ToBytes(b64) {
+function b64ToBytes(b64: string): Uint8Array {
   if (!b64) return new Uint8Array();
   const bin = atob(b64);
   const out = new Uint8Array(bin.length);
@@ -31,15 +45,15 @@ function b64ToBytes(b64) {
   return out;
 }
 
-function extractText(html) {
+function extractText(html: string): string {
   const tmp = document.createElement("div");
   tmp.innerHTML = html;
   return tmp.textContent || "";
 }
 
-function makePlan(text) {
+function makePlan(text: string): DecodePlanStep[] {
   const nonSpace = text.replace(/\s/g, "").length || 1;
-  const plan = [];
+  const plan: DecodePlanStep[] = [];
   let logical = 0;
 
   for (let i = 0; i < text.length; i++) {
@@ -51,14 +65,17 @@ function makePlan(text) {
 
     const wave = logical / nonSpace;
     const settleAt = Math.min(1, Math.max(0.05, wave + (Math.random() - 0.5) * 0.2));
-    const noise = 0.35 + (1 - wave) * 0.55; // louder early, calmer later
-    plan.push({ stable: false, target: ch, settleAt, noise });
+        const noise = 0.35 + (1 - wave) * 0.55; // louder early, calmer later
+        plan.push({ stable: false, target: ch, settleAt, noise });
     logical++;
   }
   return plan;
 }
 
-function runDecodeEffect(outEl, targetText) {
+function runDecodeEffect(
+  outEl: HTMLElement | null,
+  targetText: string
+): Promise<void> {
   if (!outEl) return Promise.resolve();
 
   const plan = makePlan(targetText);
@@ -70,10 +87,10 @@ function runDecodeEffect(outEl, targetText) {
   outEl.hidden = false;
   outEl.textContent = current.join("");
 
-  return new Promise((resolve) => {
+  return new Promise<void>((resolve) => {
     const start = performance.now();
 
-    const tick = (ts) => {
+    const tick = (ts: number) => {
       const t = Math.min(1, (ts - start) / duration);
 
       for (let i = 0; i < plan.length; i++) {
@@ -83,13 +100,16 @@ function runDecodeEffect(outEl, targetText) {
           continue;
         }
 
-        if (t >= step.settleAt) {
+        const settleAt = step.settleAt ?? 1;
+        const noise = step.noise ?? 0.35;
+
+        if (t >= settleAt) {
           current[i] = step.target;
           continue;
         }
 
-        const remaining = (step.settleAt - t) / Math.max(step.settleAt, 1e-6);
-        const pFlip = Math.min(0.98, step.noise * (0.25 + remaining));
+        const remaining = (settleAt - t) / Math.max(settleAt, 1e-6);
+        const pFlip = Math.min(0.98, noise * (0.25 + remaining));
         const pTrue = 0.06 + (1 - remaining) * 0.12;
         const r = Math.random();
         if (r < pTrue) current[i] = step.target;
@@ -109,10 +129,16 @@ function runDecodeEffect(outEl, targetText) {
   });
 }
 
-async function decryptPayload(dataset, password) {
+async function decryptPayload(
+  dataset: EncryptedDataset,
+  password: string
+): Promise<string> {
   const salt = b64ToBytes(dataset.salt);
   const nonce = b64ToBytes(dataset.nonce);
   const ciphertext = b64ToBytes(dataset.ciphertext);
+  const saltBuf = salt.buffer as ArrayBuffer;
+  const nonceBuf = nonce.buffer as ArrayBuffer;
+  const cipherBuf = ciphertext.buffer as ArrayBuffer;
 
   if (!salt.length || !nonce.length || !ciphertext.length) {
     throw new Error("Missing cipher payload");
@@ -131,7 +157,7 @@ async function decryptPayload(dataset, password) {
   const aesKey = await crypto.subtle.deriveKey(
     {
       name: "PBKDF2",
-      salt,
+      salt: saltBuf,
       iterations,
       hash: "SHA-256",
     },
@@ -142,22 +168,24 @@ async function decryptPayload(dataset, password) {
   );
 
   const plaintext = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: nonce },
+    { name: "AES-GCM", iv: nonceBuf },
     aesKey,
-    ciphertext
+    cipherBuf
   );
 
   return decoder.decode(plaintext);
 }
 
-function initEncryptedNote(note) {
-  const status = note.querySelector(".encrypted-note__status");
-  const decode = note.querySelector(".encrypted-note__decode");
-  const body = note.querySelector(".encrypted-note__body");
-  const form = note.querySelector(".encrypted-note__form");
-  const scrambleBtn = note.querySelector(".encrypted-note__scramble");
+function initEncryptedNote(note: HTMLElement) {
+  const status = note.querySelector<HTMLElement>(".encrypted-note__status");
+  const decode = note.querySelector<HTMLElement>(".encrypted-note__decode");
+  const body = note.querySelector<HTMLElement>(".encrypted-note__body");
+  const form = note.querySelector<HTMLFormElement>(".encrypted-note__form");
+  const scrambleBtn = note.querySelector<HTMLButtonElement>(
+    ".encrypted-note__scramble"
+  );
 
-  const setStatus = (msg) => {
+  const setStatus = (msg: string) => {
     if (status) status.textContent = msg;
   };
 
@@ -196,7 +224,10 @@ function initEncryptedNote(note) {
     setStatus("Decrypting…");
 
     try {
-      const plaintext = await decryptPayload(note.dataset, password);
+      const plaintext = await decryptPayload(
+        note.dataset as EncryptedDataset,
+        password
+      );
       const textOnly = extractText(plaintext) || "Decrypted";
 
       await runDecodeEffect(decode, textOnly);
@@ -236,5 +267,7 @@ function initEncryptedNote(note) {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
-  document.querySelectorAll(".encrypted-note").forEach(initEncryptedNote);
+  document
+    .querySelectorAll<HTMLElement>(".encrypted-note")
+    .forEach((note) => initEncryptedNote(note));
 });

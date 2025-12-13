@@ -1,15 +1,27 @@
 import { joinSegments } from "./path";
 
-export class FileTrieNode {
-  constructor(segments, data) {
+export type ContentEntry = {
+  slug: string;
+  filePath: string;
+  title?: string;
+};
+
+export class FileTrieNode<T extends ContentEntry = ContentEntry> {
+  children: FileTrieNode<T>[];
+  slugSegments: string[];
+  data: T | null;
+  isFolder: boolean;
+  displayNameOverride?: string;
+  fileSegmentHint?: string;
+
+  constructor(segments: string[], data?: T) {
     this.children = [];
     this.slugSegments = segments;
     this.data = data ?? null;
     this.isFolder = false;
-    this.displayNameOverride = undefined;
   }
 
-  get displayName() {
+  get displayName(): string {
     const nonIndexTitle =
       this.data?.title === "index" ? undefined : this.data?.title;
     if (this.displayNameOverride) {
@@ -23,11 +35,11 @@ export class FileTrieNode {
     return fallback.replace(/-/g, " ");
   }
 
-  set displayName(name) {
+  set displayName(name: string) {
     this.displayNameOverride = name;
   }
 
-  get slug() {
+  get slug(): string {
     const path = joinSegments(...this.slugSegments);
     if (this.isFolder) {
       return joinSegments(path, "index");
@@ -36,18 +48,18 @@ export class FileTrieNode {
     return path;
   }
 
-  get slugSegment() {
+  get slugSegment(): string {
     return this.slugSegments[this.slugSegments.length - 1];
   }
 
-  makeChild(path, file) {
+  private makeChild(path: string[], file?: T): FileTrieNode<T> {
     const fullPath = [...this.slugSegments, path[0]];
-    const child = new FileTrieNode(fullPath, file);
+    const child = new FileTrieNode<T>(fullPath, file);
     this.children.push(child);
     return child;
   }
 
-  insert(path, file) {
+  insert(path: string[], file: T): void {
     if (path.length === 0) {
       throw new Error("path is empty");
     }
@@ -75,11 +87,11 @@ export class FileTrieNode {
   }
 
   // Add new file to trie
-  add(file) {
+  add(file: T): void {
     this.insert(file.slug.split("/"), file);
   }
 
-  findNode(path) {
+  findNode(path: string[]): FileTrieNode<T> | undefined {
     if (path.length === 0 || (path.length === 1 && path[0] === "index")) {
       return this;
     }
@@ -89,7 +101,7 @@ export class FileTrieNode {
       ?.findNode(path.slice(1));
   }
 
-  ancestryChain(path) {
+  ancestryChain(path: string[]): FileTrieNode<T>[] | undefined {
     if (path.length === 0 || (path.length === 1 && path[0] === "index")) {
       return [this];
     }
@@ -110,7 +122,7 @@ export class FileTrieNode {
   /**
    * Filter trie nodes. Behaves similar to `Array.prototype.filter()`, but modifies tree in place
    */
-  filter(filterFn) {
+  filter(filterFn: (node: FileTrieNode<T>) => boolean): void {
     this.children = this.children.filter(filterFn);
     this.children.forEach((child) => child.filter(filterFn));
   }
@@ -118,7 +130,7 @@ export class FileTrieNode {
   /**
    * Map over trie nodes. Behaves similar to `Array.prototype.map()`, but modifies tree in place
    */
-  map(mapFn) {
+  map(mapFn: (node: FileTrieNode<T>) => void): void {
     mapFn(this);
     this.children.forEach((child) => child.map(mapFn));
   }
@@ -126,14 +138,18 @@ export class FileTrieNode {
   /**
    * Sort trie nodes according to sort/compare function
    */
-  sort(sortFn) {
+  sort(sortFn: (a: FileTrieNode<T>, b: FileTrieNode<T>) => number): void {
     this.children = this.children.sort(sortFn);
     this.children.forEach((e) => e.sort(sortFn));
   }
 
-  static fromEntries(entries) {
-    const trie = new FileTrieNode([]);
-    entries.forEach(([, entry]) => trie.add(entry));
+  static fromEntries<TEntry extends ContentEntry>(
+    entries: Iterable<[string, TEntry]>
+  ): FileTrieNode<TEntry> {
+    const trie = new FileTrieNode<TEntry>([]);
+    for (const [, entry] of entries) {
+      trie.add(entry);
+    }
     return trie;
   }
 
@@ -141,9 +157,11 @@ export class FileTrieNode {
    * Get all entries in the trie
    * in the a flat array including the full path and the node
    */
-  entries() {
-    const traverse = (node) => {
-      const result = [[node.slug, node]];
+  entries(): Array<[string, FileTrieNode<T>]> {
+    const traverse = (
+      node: FileTrieNode<T>
+    ): Array<[string, FileTrieNode<T>]> => {
+      const result: Array<[string, FileTrieNode<T>]> = [[node.slug, node]];
       return result.concat(...node.children.map(traverse));
     };
 
@@ -154,9 +172,9 @@ export class FileTrieNode {
    * Get all folder paths in the trie
    * @returns array containing folder state for trie
    */
-  getFolderPaths() {
+  getFolderPaths(): string[] {
     return this.entries()
-      .filter(([_, node]) => node.isFolder)
-      .map(([path, _]) => path);
+      .filter(([, node]) => node.isFolder)
+      .map(([path]) => path);
   }
 }

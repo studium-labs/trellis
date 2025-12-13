@@ -3,3 +3,4 @@ static/
 .build/
 zref/
 trellis.db
+.theme_hash

@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
@@ -16,18 +15,26 @@ pub struct PageMetadata {
     pub updated: Option<DateTime<Utc>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tags: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub word_count: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encrypted: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub draft: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub publish: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Page {
     pub slug: String,
     pub source_path: PathBuf,
-    pub frontmatter: HashMap<String, serde_yaml::Value>,
+    pub frontmatter: PageMetadata,
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub html: Option<String>,
-    #[serde(flatten)]
-    pub meta: PageMetadata,
 }
 
 impl Page {
@@ -35,10 +42,9 @@ impl Page {
         Self {
             slug,
             source_path,
-            frontmatter: HashMap::new(),
+            frontmatter: PageMetadata::default(),
             content,
             html: None,
-            meta: PageMetadata::default(),
         }
     }
 }
@@ -53,9 +59,7 @@ pub struct PageContext {
 pub struct RenderedPage {
     pub slug: String,
     pub html: String,
-    pub frontmatter: HashMap<String, serde_yaml::Value>,
-    #[serde(flatten)]
-    pub meta: PageMetadata,
+    pub frontmatter: PageMetadata,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cached: Option<bool>,
 }
@@ -71,7 +75,6 @@ impl From<Page> for RenderedPage {
             slug: page.slug,
             html,
             frontmatter: page.frontmatter,
-            meta: page.meta,
             cached: None,
         }
     }

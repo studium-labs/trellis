@@ -16,63 +16,20 @@ use walkdir::WalkDir;
 
 use crate::trellis::config::SiteConfig;
 
-pub async fn db_pool() -> anyhow::Result<SqlitePool> {
-    // Allow override via env (works for deployments that supply DATABASE_URL)
-    let url = env::var("DATABASE_URL")
-        .or_else(|_| env::var("TRELLIS_DATABASE_URL"))
-        .unwrap_or_else(|_| {
-            let mut path = env::current_dir().expect("cwd");
-            path.push("trellis.db");
-            // SQLx expects three slashes for an absolute path (sqlite:///...)
-            // otherwise it treats it as relative and the connection can fail.
-            format!("sqlite://{}", path.display())
-        });
-
-    // If we're pointing at a file-based SQLite DB, ensure the file exists
-    // so SQLx doesn't return code 14 ("unable to open database file").
-    if let Some(db_path) = sqlite_path_from_url(&url) {
-        if let Some(parent) = db_path.parent() {
-            if !parent.exists() {
-                tokio::fs::create_dir_all(parent).await?;
-            }
-        }
-        if tokio::fs::metadata(&db_path).await.is_err() {
-            File::create(&db_path).await?;
-        }
-    }
-
-    info!("Opening SQLite at {}", url);
-    let pool = SqlitePoolOptions::new().connect(&url).await?;
-    Ok(pool)
-}
-
-/// Extract a filesystem path from a sqlite URL of the form sqlite://<abs path>.
-/// Returns None for in-memory or non-sqlite schemes.
-fn sqlite_path_from_url(url: &str) -> Option<std::path::PathBuf> {
-    const PREFIX: &str = "sqlite://";
-    if !url.starts_with(PREFIX) {
-        return None;
-    }
-    let rest = &url[PREFIX.len()..];
-    // Ignore in-memory and other special SQLite URLs.
-    if rest.starts_with(':') {
-        return None;
-    }
-    Some(std::path::PathBuf::from(rest))
-}
-
 pub async fn run() -> io::Result<()> {
     let config = SiteConfig::load();
     let server_cfg = config.server.clone();
 
     info!(
-        "studium.dev is listening on: http://{}:{}",
+        "Trellis is listening on: http://{}:{}",
         server_cfg.host, server_cfg.port
     );
     // Build the shared Handlebars registry once for all workers.
-    let handlebars = web::Data::new(build_handlebars());
+    let handlebars = build_handlebars();
 
-    let pool = db_pool().await.expect("unable to connect to sqlite db!");
+    let pool = get_db_pool()
+        .await
+        .expect("unable to connect to sqlite db!");
     let max_bytes = server_cfg.max_payload_bytes();
     let cors_origins = server_cfg.cors_origins.clone();
 
@@ -81,7 +38,7 @@ pub async fn run() -> io::Result<()> {
         App::new()
             .wrap(Logger::default())
             .app_data(web::Data::new(pool.clone()))
-            .app_data(handlebars.clone())
+            .app_data(web::Data::new(handlebars.clone()))
             .app_data(web::PayloadConfig::new(max_bytes))
             // .app_data(web::Data::new())
             .wrap(build_cors(&cors_origins))
@@ -147,4 +104,34 @@ fn build_handlebars() -> Handlebars<'static> {
     }
 
     handlebars
+}
+
+pub async fn get_db_pool() -> anyhow::Result<SqlitePool> {
+    // Allow override via env (works for deployments that supply DATABASE_URL)
+    let url = env::var("DATABASE_URL")
+        .or_else(|_| env::var("TRELLIS_DATABASE_URL"))
+        .unwrap_or_else(|_| {
+            let mut path = env::current_dir().expect("cwd");
+            path.push("trellis.db");
+            // SQLx expects three slashes for an absolute path (sqlite:///...)
+            // otherwise it treats it as relative and the connection can fail.
+            path.display().to_string()
+        });
+    let uri = format!("sqlite://{}", &url);
+
+    let db_path = std::path::PathBuf::from(&url);
+    // If we're pointing at a file-based SQLite DB, ensure the file exists
+    // so SQLx doesn't return code 14 ("unable to open database file").
+    if let Some(parent) = db_path.parent() {
+        if !parent.exists() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+    }
+    if tokio::fs::metadata(&db_path).await.is_err() {
+        File::create(&db_path).await?;
+    }
+
+    info!("Opening SQLite at {}", &uri);
+    let pool = SqlitePoolOptions::new().connect(&uri).await?;
+    Ok(pool)
 }

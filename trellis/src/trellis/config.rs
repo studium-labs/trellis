@@ -331,69 +331,6 @@ pub fn google_font_href(theme: &ThemeConfig) -> String {
     )
 }
 
-/// CSS variable declarations derived from the active theme, mirroring Quartz's joinStyles.
-pub fn theme_css_variables(theme: &ThemeConfig) -> String {
-    const DEFAULT_SANS: &str = "system-ui, \"Segoe UI\", Roboto, Helvetica, Arial, sans-serif, \"Apple Color Emoji\", \"Segoe UI Emoji\", \"Segoe UI Symbol\"";
-    const DEFAULT_MONO: &str = "ui-monospace, SFMono-Regular, SF Mono, Menlo, monospace";
-
-    format!(
-        r#"
-:root {{
-  --light: {l_light};
-  --lightgray: {l_lightgray};
-  --gray: {l_gray};
-  --darkgray: {l_darkgray};
-  --dark: {l_dark};
-  --secondary: {l_secondary};
-  --tertiary: {l_tertiary};
-  --highlight: {l_highlight};
-  --textHighlight: {l_text_highlight};
-
-  --titleFont: "{title}", {sans};
-  --headerFont: "{header}", {sans};
-  --bodyFont: "{body}", {sans};
-  --codeFont: "{code}", {mono};
-}}
-
-:root[saved-theme=\"dark\"] {{
-  --light: {d_light};
-  --lightgray: {d_lightgray};
-  --gray: {d_gray};
-  --darkgray: {d_darkgray};
-  --dark: {d_dark};
-  --secondary: {d_secondary};
-  --tertiary: {d_tertiary};
-  --highlight: {d_highlight};
-  --textHighlight: {d_text_highlight};
-}}
-"#,
-        l_light = theme.colors.light_mode.light,
-        l_lightgray = theme.colors.light_mode.lightgray,
-        l_gray = theme.colors.light_mode.gray,
-        l_darkgray = theme.colors.light_mode.darkgray,
-        l_dark = theme.colors.light_mode.dark,
-        l_secondary = theme.colors.light_mode.secondary,
-        l_tertiary = theme.colors.light_mode.tertiary,
-        l_highlight = theme.colors.light_mode.highlight,
-        l_text_highlight = theme.colors.light_mode.text_highlight,
-        d_light = theme.colors.dark_mode.light,
-        d_lightgray = theme.colors.dark_mode.lightgray,
-        d_gray = theme.colors.dark_mode.gray,
-        d_darkgray = theme.colors.dark_mode.darkgray,
-        d_dark = theme.colors.dark_mode.dark,
-        d_secondary = theme.colors.dark_mode.secondary,
-        d_tertiary = theme.colors.dark_mode.tertiary,
-        d_highlight = theme.colors.dark_mode.highlight,
-        d_text_highlight = theme.colors.dark_mode.text_highlight,
-        title = theme.typography.header,
-        header = theme.typography.header,
-        body = theme.typography.body,
-        code = theme.typography.code,
-        sans = DEFAULT_SANS,
-        mono = DEFAULT_MONO
-    )
-}
-
 /// Stable hash of the active theme configuration, used for cache busting.
 pub fn theme_hash(theme: &ThemeConfig) -> String {
     let json = serde_json::to_string(theme).unwrap_or_default();

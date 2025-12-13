@@ -33,6 +33,8 @@ impl Transformer for FrontMatter {
         if !yaml_str.is_empty() {
             let parsed: HashMap<String, serde_yaml::Value> =
                 serde_yaml::from_str(&yaml_str).context("parsing frontmatter")?;
+
+            println!("PARSED: {:?}", parsed);
             let mut meta = PageMetadata::default();
 
             if let Some(serde_yaml::Value::String(title)) = parsed.get("title") {
@@ -50,11 +52,17 @@ impl Transformer for FrontMatter {
             if let Some(tags) = parsed.get("tags").and_then(as_string_list) {
                 meta.tags = Some(tags);
             }
-
-            page.meta = meta;
-            page.frontmatter = parsed;
+            if let Some(password) = parsed.get("password").and_then(|v| v.as_str()) {
+                meta.password = Some(password.to_owned());
+            }
+            if let Some(draft) = parsed.get("draft").and_then(|v| v.as_bool()) {
+                meta.draft = Some(draft);
+            }
+            if let Some(publish) = parsed.get("publish").and_then(|v| v.as_bool()) {
+                meta.publish = Some(publish);
+            }
+            page.frontmatter = meta;
         }
-
         page.content = remainder;
         Ok(page)
     }
@@ -84,10 +92,6 @@ pub struct DraftFilter;
 
 impl Filter for DraftFilter {
     fn include(&self, page: &Page) -> bool {
-        page.frontmatter
-            .get("draft")
-            .and_then(|v| v.as_bool())
-            .map(|draft| !draft)
-            .unwrap_or(true)
+        page.frontmatter.draft.unwrap_or(true)
     }
 }

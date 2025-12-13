@@ -10,8 +10,8 @@
     <style>{{{styles}}}</style>
   </head>
   <body>
-    <div id="quartz-root" class="page">
-      <div id="quartz-body">
+    <div id="trellis-root" class="page">
+      <div id="trellis-body">
         <aside class="left sidebar">
           <div class="page-header">
             <a href="/">
@@ -45,6 +45,19 @@
               {{{article.html}}}
             </section>
           </article>
+          <footer>
+            <p>Created with
+              <a href="https://trellis.studium.dev/">Trellis v{{footer.version}}</a>
+              ©
+              {{footer.year}}</p>
+            {{#if footer.links}}
+              <ul>
+                {{#each footer.links}}
+                  <li><a href="{{href}}">{{text}}</a></li>
+                {{/each}}
+              </ul>
+            {{/if}}
+          </footer>
         </main>
 
         <aside class="right sidebar">
@@ -54,25 +67,12 @@
           </div>
         </aside>
       </div>
-
-    <footer>
-      <p>Created with
-        <a href="https://trellis.studium.dev/">Trellis v{{footer.version}}</a>
-        ©
-        {{footer.year}}</p>
-      {{#if footer.links}}
-        <ul>
-          {{#each footer.links}}
-            <li><a href="{{href}}">{{text}}</a></li>
-          {{/each}}
-        </ul>
-      {{/if}}
-    </footer>
     </div>
 
-    <script type="module" src="/static/explorer.bundle.js"></script>
-    <script type="module" src="/js/components/scripts/overlay-explorer.inline.js"></script>
-    <script type="module" src="/js/components/scripts/encrypted-note.inline.js"></script>
-    <script type="module" src="/js/components/scripts/mermaid.inline.js"></script>
+    <script type="importmap">{{{scripts.import_map}}}</script>
+    <script type="module">{{{scripts.explorer}}}</script>
+    <script type="module">{{{scripts.overlay_explorer}}}</script>
+    <script type="module">{{{scripts.encrypted_note}}}</script>
+    <script type="module">{{{scripts.mermaid}}}</script>
   </body>
 </html>

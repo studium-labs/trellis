@@ -1,6 +1,6 @@
 ---
 title: Top Secret Data
-password: password
+password: "password"
 ---
 
 This is a top secret document blah blah blah...

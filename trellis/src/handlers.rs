@@ -1,126 +1,90 @@
 use std::sync::{OnceLock, RwLock};
 use std::time::SystemTime;
 
-use actix_web::http::header::CONTENT_TYPE;
 use actix_web::{HttpResponse, HttpResponseBuilder, Responder, get, web};
 use handlebars::Handlebars;
-use regex::Regex;
+use log::error;
 use serde::Serialize;
 use serde_json::json;
 use serde_yaml;
 use std::fs;
-use std::io;
 
-use crate::trellis::cache;
-use crate::trellis::config::{google_font_href, theme_css_variables};
+use crate::trellis::bundler::{InlineScripts, inline_scripts};
+use crate::trellis::config::google_font_href;
+use crate::trellis::styles::compiled_styles;
 use crate::trellis::types::{RenderedPage, slug_from_path};
-use crate::trellis::{SiteConfig, TrellisEngine};
+use crate::trellis::{SiteConfig, TrellisEngine, trellis_engine};
+
 use chrono::{Datelike, Utc};
-use grass;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
+
+pub fn config(conf: &mut web::ServiceConfig) {
+    let api_scope = web::scope("/api").service(healthcheck_handler);
+
+    // Prebuild markdown to cache and collect slugs
+    let engine = trellis_engine();
+    let mut slugs: Vec<String> = engine.prebuild_all().unwrap_or_default();
+    if let Ok(mut cached) = engine.cached_slugs() {
+        slugs.append(&mut cached);
+    }
+    slugs.sort();
+    slugs.dedup();
+
+    let site_scope = web::scope("")
+        .service(feed_handler)
+        // Catch-all route keeps in sync with content changes without restart
+        .route(
+            "/{slug:.*}",
+            web::get().to(
+                move |path: web::Path<String>, hb: web::Data<Handlebars<'static>>| {
+                    let slug = path.into_inner();
+                    async move { render_slug(slug, hb).await }
+                },
+            ),
+        );
+
+    conf.service(api_scope);
+    conf.service(site_scope);
+}
 
 #[get("/health")]
 pub async fn healthcheck_handler() -> impl Responder {
     HttpResponse::Ok().json(json!({ "message": "pong" }))
 }
 
-#[get("/static/explorer.bundle.js")]
-pub async fn explorer_script_handler() -> impl Responder {
-    const JS: &str = include_str!("../templates/components/scripts/explorer.inline.js");
-    HttpResponse::Ok()
-        .insert_header((CONTENT_TYPE, "application/javascript"))
-        .body(JS)
-}
-
-#[get("/js/{tail:.*}")]
-pub async fn js_handler(path: web::Path<String>) -> impl Responder {
-    let tail = path.into_inner();
-    let Some(path) = resolve_js_path(&tail) else {
-        return HttpResponse::NotFound().finish();
-    };
-    match std::fs::read_to_string(&path) {
-        Ok(body) => HttpResponse::Ok()
-            .insert_header((CONTENT_TYPE, "application/javascript"))
-            .body(body),
-        Err(err) => {
-            log::error!("Failed to read JS file {:?}: {}", path, err);
-            HttpResponse::InternalServerError().body("failed to load script")
-        }
-    }
-}
-
-fn resolve_js_path(tail: &str) -> Option<PathBuf> {
-    let tail = if tail.ends_with(".js") {
-        tail.to_string()
-    } else {
-        format!("{tail}.js")
-    };
-
-    let templates_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
-
-    let direct = templates_root.join(&tail);
-    if direct.exists() {
-        return Some(direct);
-    }
-
-    let util = templates_root.join("util").join(&tail);
-    if util.exists() {
-        return Some(util);
-    }
-
-    None
-}
-
-fn quartz_engine() -> &'static TrellisEngine {
-    static ENGINE: OnceLock<TrellisEngine> = OnceLock::new();
-    ENGINE.get_or_init(|| TrellisEngine::new(SiteConfig::load()).expect("init quartz engine"))
-}
-
-#[get("/")]
-pub async fn home_handler(hb: web::Data<Handlebars<'static>>) -> impl Responder {
-    let engine = quartz_engine();
-    let page = match engine.render_page("index") {
-        Ok(page) => page,
-        Err(err) => {
-            if err.to_string().contains("page filtered out by plugins") {
-                return HttpResponse::NotFound().finish();
-            }
-            log::error!("failed to render page: {}", err);
-            placeholder_page()
-        }
-    };
-
-    let ctx = build_home_context(engine, page);
-    render(hb, "index", json!(ctx), HttpResponse::Ok())
-}
-
 async fn render_slug(slug: String, hb: web::Data<Handlebars<'static>>) -> impl Responder {
-    let engine = quartz_engine();
-    if !engine.page_exists(&slug) {
+    let engine = trellis_engine();
+    let raw_slug = slug;
+    let trimmed = raw_slug.trim_matches('/');
+
+    let canonical_slug = if trimmed.is_empty() {
+        "index".to_string()
+    } else if raw_slug.ends_with('/') {
+        format!("{}/index", trimmed)
+    } else {
+        trimmed.to_string()
+    };
+
+    if !engine.page_exists(&canonical_slug) {
         return HttpResponse::NotFound().finish();
     }
-    let page = match engine.render_page(&slug) {
+    let page = match engine.render_page(&canonical_slug) {
         Ok(page) => page,
         Err(err) => {
-            if err.to_string().contains("page filtered out by plugins") {
-                return HttpResponse::NotFound().finish();
-            }
-            let not_found = err
-                .downcast_ref::<io::Error>()
-                .map(|e| e.kind() == io::ErrorKind::NotFound)
-                .unwrap_or(false);
-            if not_found {
-                return HttpResponse::NotFound().finish();
-            }
-            log::error!("failed to render page {}: {}", slug, err);
-            placeholder_page()
+            error!("failed to render page {}: {}", canonical_slug, err);
+            return HttpResponse::NotFound().finish();
         }
     };
 
     let ctx = build_home_context(engine, page);
-    render(hb, "page", json!(ctx), HttpResponse::Ok())
+    let template = if canonical_slug == "index" {
+        "index"
+    } else {
+        "page"
+    };
+    render(hb, template, json!(ctx), HttpResponse::Ok())
 }
 
 #[get("/feed")]
@@ -130,18 +94,6 @@ pub async fn feed_handler(hb: web::Data<Handlebars<'static>>) -> impl Responder 
         "feed",
         json!({ "user": "Guest", "data": "your feed goes here" }),
         HttpResponse::Ok(),
-    )
-}
-
-#[get("/error")]
-pub async fn error_handler(hb: web::Data<Handlebars<'static>>) -> impl Responder {
-    let engine = quartz_engine();
-    let footer = footer_context(&engine.config);
-    render(
-        hb,
-        "error",
-        json!({ "status_code": 500, "error": "Something went wrong", "footer": footer }),
-        HttpResponse::InternalServerError(),
     )
 }
 
@@ -181,6 +133,7 @@ struct HomeContext<'a> {
     configuration: &'a SiteConfig,
     styles: String,
     fonts_href: String,
+    scripts: InlineScripts,
     footer: FooterContext,
 }
 
@@ -221,7 +174,7 @@ struct ArticleContext {
     created: String,
     updated: String,
     read_time: String,
-    body: Vec<String>,
+    body: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     html: Option<String>,
 }
@@ -239,6 +192,7 @@ fn build_home_context<'a>(engine: &'a TrellisEngine, page: RenderedPage) -> Home
     let styles = compiled_styles(&engine.config);
     let fonts_href = google_font_href(&engine.config.configuration.theme);
     let footer = footer_context(&engine.config);
+    let scripts = inline_scripts();
 
     HomeContext {
         site: SiteContext {
@@ -256,6 +210,7 @@ fn build_home_context<'a>(engine: &'a TrellisEngine, page: RenderedPage) -> Home
         configuration: &engine.config,
         styles,
         fonts_href,
+        scripts,
         footer,
     }
 }
@@ -306,8 +261,10 @@ fn links_from_config(links: &BTreeMap<String, String>) -> Option<Vec<FooterLink>
 }
 
 fn build_nav_from_content(config: &SiteConfig) -> Vec<NavItem> {
-    let content_root =
-        resolve_path(Path::new(env!("CARGO_MANIFEST_DIR")), &config.paths.content_root);
+    let content_root = resolve_path(
+        Path::new(env!("CARGO_MANIFEST_DIR")),
+        &config.paths.content_root,
+    );
     let latest = latest_mtime_recursive(&content_root, &config.configuration.ignore_patterns);
 
     static NAV_CACHE: OnceLock<RwLock<NavCache>> = OnceLock::new();
@@ -408,6 +365,44 @@ fn compute_nav(content_root: &Path, ignore_patterns: &[String]) -> Vec<NavItem> 
 
     let mut nav = Vec::with_capacity(groups.len());
 
+    let humanize = |slug: &str| humanize_segment(slug.rsplit('/').next().unwrap_or(slug));
+
+    let read_frontmatter_title = |path: &Path| -> Option<String> {
+        let content = fs::read_to_string(path).ok()?;
+        let mut lines = content.lines();
+        if lines.next()? != "---" {
+            return None;
+        }
+
+        let mut fm = Vec::new();
+        for line in lines {
+            if line.trim() == "---" {
+                break;
+            }
+            fm.push(line);
+        }
+        if fm.is_empty() {
+            return None;
+        }
+
+        let yaml = fm.join("\n");
+        serde_yaml::from_str::<serde_yaml::Value>(&yaml)
+            .ok()?
+            .get("title")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+    };
+
+    let title_for = |slug: &str, is_folder: bool| -> String {
+        let path = if is_folder {
+            content_root.join(slug).join("index.md")
+        } else {
+            content_root.join(slug).with_extension("md")
+        };
+
+        read_frontmatter_title(&path).unwrap_or_else(|| humanize(slug))
+    };
+
     for (group, mut children) in groups {
         children.sort();
 
@@ -418,18 +413,14 @@ fn compute_nav(content_root: &Path, ignore_patterns: &[String]) -> Vec<NavItem> 
                 children
                     .iter()
                     .map(|slug| NavLeaf {
-                        title: title_for_file(slug, content_root),
+                        title: title_for(slug, false),
                         path: slug.clone(),
                     })
                     .collect(),
             )
         };
 
-        let title = if children.is_some() {
-            title_for_folder(&group, content_root)
-        } else {
-            title_for_file(&group, content_root)
-        };
+        let title = title_for(&group, children.is_some());
 
         nav.push(NavItem {
             title,
@@ -439,52 +430,6 @@ fn compute_nav(content_root: &Path, ignore_patterns: &[String]) -> Vec<NavItem> 
     }
 
     nav
-}
-
-fn title_for_folder(folder: &str, content_root: &Path) -> String {
-    let index_path = content_root.join(folder).join("index.md");
-    if let Some(title) = frontmatter_title(&index_path) {
-        return title;
-    }
-
-    humanize_segment(folder.rsplit('/').next().unwrap_or(folder))
-}
-
-fn title_for_file(slug: &str, content_root: &Path) -> String {
-    let path = content_root.join(slug).with_extension("md");
-    if let Some(title) = frontmatter_title(&path) {
-        return title;
-    }
-
-    humanize_segment(slug.rsplit('/').next().unwrap_or(slug))
-}
-
-fn frontmatter_title(path: &Path) -> Option<String> {
-    let content = fs::read_to_string(path).ok()?;
-    let mut lines = content.lines();
-
-    if lines.next()? != "---" {
-        return None;
-    }
-
-    let mut fm_lines = vec![];
-    for line in lines {
-        if line.trim() == "---" {
-            break;
-        }
-        fm_lines.push(line);
-    }
-
-    if fm_lines.is_empty() {
-        return None;
-    }
-
-    let yaml = fm_lines.join("\n");
-    serde_yaml::from_str::<serde_yaml::Value>(&yaml)
-        .ok()?
-        .get("title")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
 }
 
 fn humanize_segment(segment: &str) -> String {
@@ -514,180 +459,34 @@ fn resolve_path(base: &Path, path: &str) -> PathBuf {
 }
 
 fn to_article(page: &RenderedPage) -> ArticleContext {
-    let intro = page
-        .meta
-        .description
-        .clone()
-        .or_else(|| {
-            page.frontmatter
-                .get("description")
-                .and_then(|v| v.as_str().map(String::from))
-        })
-        .unwrap_or_else(|| "This page is rendered on-demand from markdown.".into());
-
-    let title = page
-        .meta
-        .title
-        .clone()
-        .or_else(|| {
-            page.frontmatter
-                .get("title")
-                .and_then(|v| v.as_str().map(String::from))
-        })
-        .unwrap_or_else(|| "Untitled".into());
+    let page = page.to_owned();
 
     let created = page
-        .meta
+        .frontmatter
         .created
         .map(|d| d.format("%Y-%m-%d").to_string())
         .unwrap_or_else(|| "".into());
-
     let updated = page
-        .meta
+        .frontmatter
         .updated
         .map(|d| d.format("%Y-%m-%d").to_string())
         .unwrap_or_else(|| "".into());
 
     let words = page
         .frontmatter
-        .get("word_count")
-        .and_then(|v| v.as_u64())
-        .map(|n| n.max(1) as usize)
-        .unwrap_or_else(|| page.html.split_whitespace().count().max(1));
-
-    let read_time = ((words as f64) / 200.0).ceil().max(1.0) as u32;
+        .word_count
+        .unwrap_or_else(|| page.html.split_whitespace().count().max(1) as u64);
 
     ArticleContext {
-        title,
-        intro,
+        title: page.frontmatter.title.unwrap_or(String::new()),
+        intro: page.frontmatter.description.unwrap_or(String::new()),
         created,
         updated,
-        read_time: format!("{} min read", read_time),
-        body: html_to_paragraphs(&page.html),
+        read_time: format!(
+            "{} min read",
+            ((words as f64) / 200.0).ceil().max(1.0) as u32
+        ),
+        body: page.html.to_owned(),
         html: Some(page.html.clone()),
     }
-}
-
-fn compiled_styles(cfg: &SiteConfig) -> String {
-    static STYLES: OnceLock<RwLock<StylesCache>> = OnceLock::new();
-
-    let scss_mtime = latest_scss_mtime();
-    let cache = STYLES.get_or_init(|| {
-        RwLock::new(StylesCache {
-            css: compile_scss(cfg),
-            mtime: scss_mtime,
-        })
-    });
-
-    if let Ok(guard) = cache.read() {
-        if guard.mtime >= scss_mtime {
-            return guard.css.clone();
-        }
-    }
-
-    if let Ok(mut guard) = cache.write() {
-        if guard.mtime < scss_mtime {
-            guard.css = compile_scss(cfg);
-            guard.mtime = scss_mtime;
-        }
-        return guard.css.clone();
-    }
-
-    // Fallback in case the lock is poisoned.
-    compile_scss(cfg)
-}
-
-struct StylesCache {
-    css: String,
-    mtime: SystemTime,
-}
-
-fn compile_scss(cfg: &SiteConfig) -> String {
-    let theme_vars = theme_css_variables(&cfg.configuration.theme);
-    let scss_path = scss_entry_path();
-    let include_path = scss_path
-        .parent()
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| scss_root());
-
-    match grass::from_path(
-        &scss_path,
-        &grass::Options::default()
-            .load_path(include_path)
-            .style(grass::OutputStyle::Compressed),
-    ) {
-        Ok(css) => format!("{theme_vars}\n{css}"),
-        Err(err) => {
-            log::warn!("Failed to compile SCSS at {:?}: {err}", scss_path);
-            theme_vars
-        }
-    }
-}
-
-fn scss_root() -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("templates/assets/styles/")
-}
-
-fn scss_entry_path() -> std::path::PathBuf {
-    scss_root().join("custom.scss")
-}
-
-fn latest_scss_mtime() -> SystemTime {
-    cache::newest_mtime_with_extension(&scss_root(), "scss").unwrap_or(SystemTime::UNIX_EPOCH)
-}
-
-fn html_to_paragraphs(html: &str) -> Vec<String> {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| Regex::new(r"<[^>]+>").expect("paragraph regex"));
-    let text = re.replace_all(html, "");
-
-    text.split('\n')
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-        .collect()
-}
-
-fn placeholder_page() -> RenderedPage {
-    RenderedPage {
-        slug: "index".into(),
-        html: "<p>Quartz could not render this page.</p>".into(),
-        frontmatter: Default::default(),
-        meta: Default::default(),
-        cached: None,
-    }
-}
-
-pub fn config(conf: &mut web::ServiceConfig) {
-    let api_scope = web::scope("/api").service(healthcheck_handler);
-
-    let engine = quartz_engine();
-
-    // Prebuild markdown to cache and collect slugs
-    let mut slugs: Vec<String> = engine.prebuild_all().unwrap_or_default();
-    if let Ok(mut cached) = engine.cached_slugs() {
-        slugs.append(&mut cached);
-    }
-    slugs.sort();
-    slugs.dedup();
-
-    let site_scope = web::scope("")
-        .service(home_handler)
-        .service(feed_handler)
-        .service(error_handler)
-        .service(explorer_script_handler)
-        .service(js_handler)
-        // Catch-all route keeps in sync with content changes without restart
-        .route(
-            "/{slug:.*}",
-            web::get().to(
-                move |path: web::Path<String>, hb: web::Data<Handlebars<'static>>| {
-                    let slug = path.into_inner().trim_matches('/').to_string();
-                    async move { render_slug(slug, hb).await }
-                },
-            ),
-        );
-
-    conf.service(api_scope);
-    conf.service(site_scope);
 }

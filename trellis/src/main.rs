@@ -5,6 +5,6 @@ use std::io;
 #[actix_web::main]
 async fn main() -> io::Result<()> {
     env_logger::init_from_env(Env::default().default_filter_or("info"));
-    info!("Starting Moss...");
+    info!("Growing your garden...");
     trellis::run().await
 }

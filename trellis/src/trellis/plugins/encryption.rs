@@ -14,7 +14,6 @@ use base64::engine::general_purpose::STANDARD as B64;
 use getrandom::fill;
 use once_cell::sync::Lazy;
 use pbkdf2::pbkdf2_hmac_array;
-use serde_yaml::{Number, Value};
 use sha2::{Digest, Sha256};
 
 use crate::trellis::types::Page;
@@ -42,18 +41,17 @@ pub struct EncryptContent;
 
 impl Transformer for EncryptContent {
     fn transform(&self, mut page: Page) -> Result<Page> {
-        let Some(password_val) = page.frontmatter.get("password").cloned() else {
+        println!("in EncryptContent transformer 1 {:?}", &page.frontmatter);
+        let Some(password_val) = &page.frontmatter.password else {
+            println!("in EncryptContent transformer 2");
             return Ok(page);
         };
 
-        let Some(password) = password_val.as_str() else {
-            // Non-string password entries are ignored to avoid rendering errors.
-            page.frontmatter.remove("password");
-            return Ok(page);
-        };
+        let password = password_val.as_str();
 
-        let Some(plaintext_html) = page.html.clone() else {
+        let Some(plaintext_html) = &page.html else {
             // We expect MarkdownRenderer to run before this transformer.
+            println!("in EncryptContent transformer 3");
             return Ok(page);
         };
 
@@ -110,14 +108,13 @@ impl Transformer for EncryptContent {
         };
 
         // Prevent leaking the password into the rendered page.
-        page.frontmatter.remove("password");
+        page.frontmatter.password = Some(String::new());
 
         // Preserve an approximate word count for read-time calculations.
         let word_count = plaintext_html.split_whitespace().count() as u64;
-        page.frontmatter
-            .insert("word_count".into(), Value::Number(Number::from(word_count)));
-        page.frontmatter
-            .insert("encrypted".into(), Value::Bool(true));
+        page.frontmatter.word_count = Some(word_count);
+        page.frontmatter.encrypted = Some(true);
+        println!("in EncryptContent transformer 4");
 
         page.html = Some(format!(
             r#"<div class="encrypted-note" data-ciphertext="{ciphertext}" data-salt="{salt}" data-nonce="{nonce}" data-iterations="{iterations}" data-algo="AES-256-GCM" data-kdf="PBKDF2-SHA256" data-version="1">

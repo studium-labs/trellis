@@ -9,10 +9,11 @@ use serde_json::json;
 use serde_yaml;
 use std::fs;
 
-use crate::trellis::bundler::{InlineScripts, inline_scripts};
+use crate::trellis::bundler::{InlineScripts, ScriptNeeds, inline_scripts};
 use crate::trellis::config::google_font_href;
 use crate::trellis::styles::compiled_styles;
 use crate::trellis::types::{RenderedPage, slug_from_path};
+use crate::trellis::layout::LayoutComponent;
 use crate::trellis::{SiteConfig, TrellisEngine, trellis_engine};
 
 use chrono::{Datelike, Utc};
@@ -186,13 +187,63 @@ struct LayoutContext<'a> {
     list: &'a crate::trellis::layout::PageLayout,
 }
 
+fn script_needs(page: &RenderedPage, layout: &LayoutContext) -> ScriptNeeds {
+    let html = &page.html;
+    let has_mermaid = html.contains("class=\"mermaid\"");
+    let has_callouts = html.contains("class=\"callout\"");
+    let encrypted = page.frontmatter.encrypted.unwrap_or(false);
+    let has_explorer = layout_contains_explorer(layout);
+
+    ScriptNeeds {
+        explorer: has_explorer,
+        overlay_explorer: has_explorer,
+        encrypted_note: encrypted,
+        mermaid: has_mermaid,
+        callouts: has_callouts,
+    }
+}
+
+fn layout_contains_explorer(layout: &LayoutContext) -> bool {
+    component_list_has_explorer(&layout.shared.header)
+        || component_list_has_explorer(&layout.content.left)
+        || component_list_has_explorer(&layout.content.before_body)
+        || component_list_has_explorer(&layout.content.right)
+        || component_list_has_explorer(&layout.list.left)
+        || component_list_has_explorer(&layout.list.before_body)
+        || component_list_has_explorer(&layout.list.right)
+        || matches!(layout.shared.head, LayoutComponent::Explorer(_))
+        || matches!(layout.shared.footer, LayoutComponent::Explorer(_))
+        || component_list_has_explorer(&layout.shared.after_body)
+}
+
+fn component_list_has_explorer(list: &[LayoutComponent]) -> bool {
+    list.iter().any(component_has_explorer)
+}
+
+fn component_has_explorer(component: &LayoutComponent) -> bool {
+    match component {
+        LayoutComponent::Explorer(_) => true,
+        LayoutComponent::Flex(cfg) => cfg.components.iter().any(|item| component_has_explorer(&item.component)),
+        LayoutComponent::MobileOnly(inner)
+        | LayoutComponent::DesktopOnly(inner) => component_has_explorer(inner),
+        LayoutComponent::ConditionalRender(cond) => component_has_explorer(&cond.component),
+        _ => false,
+    }
+}
+
 fn build_home_context<'a>(engine: &'a TrellisEngine, page: RenderedPage) -> HomeContext<'a> {
     let article = to_article(&page);
     let nav = build_nav_from_content(&engine.config);
     let styles = compiled_styles(&engine.config);
     let fonts_href = google_font_href(&engine.config.configuration.theme);
     let footer = footer_context(&engine.config);
-    let scripts = inline_scripts();
+
+    let layout_ctx = LayoutContext {
+        shared: &engine.shared_layout,
+        content: &engine.content_layout,
+        list: &engine.list_layout,
+    };
+    let scripts = inline_scripts(script_needs(&page, &layout_ctx));
 
     HomeContext {
         site: SiteContext {
@@ -202,11 +253,7 @@ fn build_home_context<'a>(engine: &'a TrellisEngine, page: RenderedPage) -> Home
         nav,
         article,
         explorer: explorer_context(&engine.config),
-        layout: LayoutContext {
-            shared: &engine.shared_layout,
-            content: &engine.content_layout,
-            list: &engine.list_layout,
-        },
+        layout: layout_ctx,
         configuration: &engine.config,
         styles,
         fonts_href,

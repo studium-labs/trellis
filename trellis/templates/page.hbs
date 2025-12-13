@@ -69,10 +69,20 @@
       </div>
     </div>
 
-    <script type="importmap">{{{scripts.import_map}}}</script>
-    <script type="module">{{{scripts.explorer}}}</script>
-    <script type="module">{{{scripts.overlay_explorer}}}</script>
-    <script type="module">{{{scripts.encrypted_note}}}</script>
-    <script type="module">{{{scripts.mermaid}}}</script>
+    {{#if scripts.explorer}}
+      <script type="module">{{{scripts.explorer}}}</script>
+    {{/if}}
+    {{#if scripts.overlay_explorer}}
+      <script type="module">{{{scripts.overlay_explorer}}}</script>
+    {{/if}}
+    {{#if scripts.encrypted_note}}
+      <script type="module">{{{scripts.encrypted_note}}}</script>
+    {{/if}}
+    {{#if scripts.callouts}}
+      <script type="module">{{{scripts.callouts}}}</script>
+    {{/if}}
+    {{#if scripts.mermaid}}
+      <script type="module">{{{scripts.mermaid}}}</script>
+    {{/if}}
   </body>
 </html>

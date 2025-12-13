@@ -40,4 +40,16 @@ base64 = { workspace = true }
 pbkdf2 = { workspace = true }
 sha2 = { workspace = true }
 getrandom = { workspace = true }
-notify = "8.2.0"
+swc_bundler = { workspace = true }
+swc_common = { workspace = true }
+swc_ecma_ast = { workspace = true }
+swc_ecma_parser = { workspace = true }
+swc_ecma_codegen = { workspace = true }
+swc_ecma_transforms_base = { workspace = true }
+swc_ecma_transforms_optimization = { workspace = true }
+swc_ecma_loader = { workspace = true }
+swc_ecma_minifier = { workspace = true }
+notify = { workspace = true }
+swc_atoms = { workspace = true }
+swc_ecma_visit = { workspace = true }
+swc_ecma_transforms_typescript = { workspace = true }

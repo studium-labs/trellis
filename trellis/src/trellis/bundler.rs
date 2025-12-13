@@ -1,183 +1,407 @@
-use std::path::Path;
+use std::collections::HashMap;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::{OnceLock, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::{fs, io};
 
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD as BASE64;
+use anyhow::{Context, Error, Result};
 use log::error;
-use regex::{Captures, Regex};
 use serde::Serialize;
-use std::collections::BTreeMap;
+use swc_atoms::Atom;
+use swc_bundler::{Bundle, Bundler, Config, Hook, Load, ModuleData, ModuleType, Resolve};
+use swc_common::errors::{EmitterWriter, Handler};
+use swc_common::{sync::Lrc, FileName, Globals, Mark, SourceMap, GLOBALS};
+use swc_ecma_ast::{EsVersion, Module, Program, KeyValueProp};
+use swc_ecma_codegen::{text_writer::JsWriter, Emitter};
+use swc_ecma_parser::lexer::Lexer;
+use swc_ecma_parser::{Parser, StringInput, Syntax, TsSyntax};
+use swc_ecma_transforms_base::resolver;
+use swc_ecma_transforms_base::helpers::Helpers;
+use swc_ecma_transforms_typescript::strip_type;
+use swc_ecma_visit::VisitMutWith;
 
-// TODO: Use `swc_bundler` crate, rewrite JS scripts to be typescript, and deprecate logic here for swc logic
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ScriptKind {
+    Explorer,
+    OverlayExplorer,
+    EncryptedNote,
+    Mermaid,
+    Callouts,
+}
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, Default)]
 pub struct InlineScripts {
-    pub import_map: String,
-    pub explorer: String,
-    pub overlay_explorer: String,
-    pub encrypted_note: String,
-    pub mermaid: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub explorer: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub overlay_explorer: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encrypted_note: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mermaid: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub callouts: Option<String>,
 }
 
-impl Default for InlineScripts {
-    fn default() -> Self {
-        InlineScripts {
-            import_map: r#"{"imports":{}}"#.into(),
-            explorer: String::new(),
-            overlay_explorer: String::new(),
-            encrypted_note: String::new(),
-            mermaid: String::new(),
-        }
-    }
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ScriptNeeds {
+    pub explorer: bool,
+    pub overlay_explorer: bool,
+    pub encrypted_note: bool,
+    pub mermaid: bool,
+    pub callouts: bool,
 }
 
-pub fn inline_scripts() -> InlineScripts {
-    static SCRIPTS: OnceLock<RwLock<ScriptsCache>> = OnceLock::new();
-    let mtime = UNIX_EPOCH;
-    let cache = SCRIPTS.get_or_init(|| {
+pub fn inline_scripts(needs: ScriptNeeds) -> InlineScripts {
+    static CACHE: OnceLock<RwLock<ScriptsCache>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| {
         RwLock::new(ScriptsCache {
-            scripts: InlineScripts::default(),
-            mtime: mtime,
+            bundles: HashMap::new(),
+            mtime: UNIX_EPOCH,
         })
     });
 
-    if let Ok(guard) = cache.read() {
-        if guard.mtime >= mtime {
-            return guard.scripts.clone();
+    let newest_mtime = newest_templates_mtime().unwrap_or(UNIX_EPOCH);
+    {
+        if let Ok(cache_guard) = cache.read() {
+            if cache_guard.mtime >= newest_mtime {
+                return InlineScripts {
+                    explorer: needs
+                        .explorer
+                        .then(|| cache_guard.bundles.get(&ScriptKind::Explorer).cloned())
+                        .flatten(),
+                    overlay_explorer: needs
+                        .overlay_explorer
+                        .then(|| cache_guard.bundles.get(&ScriptKind::OverlayExplorer).cloned())
+                        .flatten(),
+                    encrypted_note: needs
+                        .encrypted_note
+                        .then(|| cache_guard.bundles.get(&ScriptKind::EncryptedNote).cloned())
+                        .flatten(),
+                    mermaid: needs
+                        .mermaid
+                        .then(|| cache_guard.bundles.get(&ScriptKind::Mermaid).cloned())
+                        .flatten(),
+                    callouts: needs
+                        .callouts
+                        .then(|| cache_guard.bundles.get(&ScriptKind::Callouts).cloned())
+                        .flatten(),
+                };
+            }
         }
     }
 
-    let compiled = build_inline_scripts().unwrap_or_else(|err| {
-        error!("Failed to inline scripts: {err}");
-        InlineScripts::default()
-    });
-
-    if let Ok(mut guard) = cache.write() {
-        guard.scripts = compiled.clone();
-        guard.mtime = mtime;
+    match build_all_bundles() {
+        Ok((bundles, mtime)) => {
+            if let Ok(mut cache_guard) = cache.write() {
+                cache_guard.bundles = bundles.clone();
+                cache_guard.mtime = mtime;
+            }
+            InlineScripts {
+                explorer: needs.explorer.then(|| bundles.get(&ScriptKind::Explorer).cloned()).flatten(),
+                overlay_explorer: needs
+                    .overlay_explorer
+                    .then(|| bundles.get(&ScriptKind::OverlayExplorer).cloned())
+                    .flatten(),
+                encrypted_note: needs
+                    .encrypted_note
+                    .then(|| bundles.get(&ScriptKind::EncryptedNote).cloned())
+                    .flatten(),
+                mermaid: needs.mermaid.then(|| bundles.get(&ScriptKind::Mermaid).cloned()).flatten(),
+                callouts: needs.callouts.then(|| bundles.get(&ScriptKind::Callouts).cloned()).flatten(),
+            }
+        }
+        Err(err) => {
+            error!("failed to build inline scripts: {err:?}");
+            InlineScripts::default()
+        }
     }
-
-    compiled
 }
 
 struct ScriptsCache {
-    scripts: InlineScripts,
+    bundles: HashMap<ScriptKind, String>,
     mtime: SystemTime,
 }
 
-fn build_inline_scripts() -> io::Result<InlineScripts> {
-    let templates_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
-    let component_root = templates_root.join("components/scripts");
-    let util_root = templates_root.join("util");
+fn newest_templates_mtime() -> Result<SystemTime> {
+    let templates = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("templates");
+    let util = templates.join("util");
+    let components = templates.join("components/scripts");
+    let util_mtime = newest_mtime_in(&util)?;
+    let comp_mtime = newest_mtime_in(&components)?;
+    Ok(util_mtime.max(comp_mtime))
+}
 
-    let util_modules = [
-        ("/js/util/path", util_root.join("path.js")),
-        ("/js/util/fileTrie", util_root.join("fileTrie.js")),
+fn newest_mtime_in(dir: &Path) -> Result<SystemTime> {
+    let mut newest = UNIX_EPOCH;
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let metadata = entry.metadata()?;
+        if metadata.is_file() {
+            if let Ok(mtime) = metadata.modified() {
+                if mtime > newest {
+                    newest = mtime;
+                }
+            }
+        }
+    }
+    Ok(newest)
+}
+
+fn build_all_bundles() -> Result<(HashMap<ScriptKind, String>, SystemTime)> {
+    let templates_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("templates");
+    let component_root = templates_root.join("components/scripts");
+
+    let entries = vec![
+        (ScriptKind::Explorer, component_root.join("explorer.inline.ts")),
         (
-            "/js/util/github-slugger",
-            util_root.join("github-slugger.js"),
-        ),
-        ("/js/util/clone", util_root.join("clone.js")),
-        (
-            "/js/components/scripts/util.js",
-            component_root.join("util.js"),
+            ScriptKind::OverlayExplorer,
+            component_root.join("overlay-explorer.inline.ts"),
         ),
         (
-            "/js/components/scripts/util",
-            component_root.join("util.js"),
+            ScriptKind::EncryptedNote,
+            component_root.join("encrypted-note.inline.ts"),
         ),
+        (ScriptKind::Mermaid, component_root.join("mermaid.inline.ts")),
+        (ScriptKind::Callouts, component_root.join("callouts.inline.ts")),
     ];
 
-    let mut imports = BTreeMap::new();
-    for (spec, path) in util_modules {
-        let code = load_js_module(spec, &path)?;
-        imports.insert(spec.to_string(), to_data_url(&code));
+    let mut bundles = HashMap::new();
+    let mut latest = newest_templates_mtime().unwrap_or(UNIX_EPOCH);
+
+    for (kind, path) in entries {
+        match bundle_entry(&path) {
+            Ok(code) => {
+                bundles.insert(kind, code);
+                if let Ok(meta) = fs::metadata(&path) {
+                    if let Ok(mtime) = meta.modified() {
+                        if mtime > latest {
+                            latest = mtime;
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                error!("failed to bundle {:?}: {}", kind, err);
+            }
+        }
     }
 
-    let explorer = load_js_module(
-        "/js/components/scripts/explorer.inline.js",
-        &component_root.join("explorer.inline.js"),
-    )?;
-    let overlay = load_js_module(
-        "/js/components/scripts/overlay-explorer.inline.js",
-        &component_root.join("overlay-explorer.inline.js"),
-    )?;
-    let encrypted = load_js_module(
-        "/js/components/scripts/encrypted-note.inline.js",
-        &component_root.join("encrypted-note.inline.js"),
-    )?;
-    let mermaid = load_js_module(
-        "/js/components/scripts/mermaid.inline.js",
-        &component_root.join("mermaid.inline.js"),
-    )?;
-
-    let import_map = serde_json::json!({ "imports": imports }).to_string();
-    let inline_scripts = InlineScripts {
-        import_map,
-        explorer,
-        overlay_explorer: overlay,
-        encrypted_note: encrypted,
-        mermaid,
-    };
-    Ok(inline_scripts)
+    Ok((bundles, latest))
 }
 
-fn load_js_module(spec: &str, path: &Path) -> io::Result<String> {
-    let source = fs::read_to_string(path)?;
-    let normalized = rewrite_relative_imports(&source, spec);
-    Ok(minify_js(&normalized))
+fn bundle_entry(entry: &Path) -> Result<String> {
+    let cm: Lrc<SourceMap> = Default::default();
+    let globals = Globals::new();
+    let loader = FsLoader { cm: cm.clone() };
+    let resolver = ScriptResolver::new();
+    let hook = Box::new(NoopHook);
+
+    let mut bundler = Bundler::new(
+        &globals,
+        cm.clone(),
+        loader,
+        resolver,
+        Config {
+            require: false,
+            disable_hygiene: false,
+            disable_fixer: false,
+            disable_inliner: true,
+            disable_dce: true,
+            external_modules: vec![Atom::from(
+                "https://cdnjs.cloudflare.com/ajax/libs/mermaid/11.4.0/mermaid.esm.min.mjs",
+            )],
+            module: ModuleType::Es,
+        },
+        hook,
+    );
+
+    let mut entries = HashMap::new();
+    entries.insert(
+        entry
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("entry")
+            .to_string(),
+        FileName::Real(entry.to_path_buf()),
+    );
+
+    let bundles: Vec<Bundle> = bundler.bundle(entries)?;
+
+    // Expect first bundle to be our entry (Named)
+    let bundled = bundles
+        .into_iter()
+        .find(|b| matches!(b.kind, swc_bundler::BundleKind::Named { .. }))
+        .ok_or_else(|| Error::msg("bundle not produced"))?;
+
+    emit_minified(&bundled.module, cm, &globals)
 }
 
-fn rewrite_relative_imports(source: &str, base_spec: &str) -> String {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| {
-        Regex::new(
-            r#"(?P<prefix>\bimport\s+(?:[^'"]*?\s+from\s+)?|\bexport\s+[^'"]*?\s+from\s+|\bimport\s*\(\s*)(?P<quote>["'])(?P<spec>[^"']+)(?P=quote)"#,
-        )
-        .expect("import regex")
-    });
+struct NoopHook;
+impl Hook for NoopHook {
+    fn get_import_meta_props(
+        &self,
+        _span: swc_common::Span,
+        _module_record: &swc_bundler::ModuleRecord,
+    ) -> Result<Vec<KeyValueProp>, Error> {
+        Ok(vec![])
+    }
+}
 
-    let base_dir = Path::new(base_spec)
-        .parent()
-        .unwrap_or_else(|| Path::new("/"))
-        .to_path_buf();
+struct ScriptResolver;
 
-    re.replace_all(source, |caps: &Captures| {
-        let spec = caps.name("spec").map(|m| m.as_str()).unwrap_or("");
-        if !spec.starts_with('.') {
-            return caps.get(0).map(|m| m.as_str()).unwrap_or("").to_string();
+impl ScriptResolver {
+    fn new() -> Self {
+        Self
+    }
+
+    fn resolve_spec(&self, spec: &str) -> Result<FileName> {
+        let templates_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("templates");
+        let util_root = templates_root.join("util");
+        let scripts_root = templates_root.join("components/scripts");
+
+        let (root, mut rel) = if let Some(rest) = spec.strip_prefix("/js/util/") {
+            (util_root, rest.to_string())
+        } else if let Some(rest) = spec.strip_prefix("/js/components/scripts/") {
+            (scripts_root, rest.to_string())
+        } else {
+            return Err(Error::msg(format!("unhandled module specifier: {spec}")));
+        };
+
+        if !rel.ends_with(".ts") && !rel.ends_with(".js") {
+            rel.push_str(".ts");
+        } else if rel.ends_with(".js") {
+            rel = rel.trim_end_matches(".js").to_string() + ".ts";
         }
 
-        let normalized = normalize_spec(&base_dir, spec);
-        format!(
-            "{}{}{}{}",
-            &caps["prefix"], &caps["quote"], normalized, &caps["quote"]
-        )
-    })
-    .into_owned()
-}
-
-fn normalize_spec(base_dir: &Path, spec: &str) -> String {
-    let joined = base_dir.join(spec);
-    let mut normalized = joined.to_string_lossy().replace('\\', "/");
-    if !normalized.starts_with('/') {
-        normalized = format!("/{}", normalized);
+        Ok(FileName::Real(root.join(rel)))
     }
-    normalized
 }
 
-fn minify_js(source: &str) -> String {
-    source
-        .lines()
-        .map(|line| line.trim())
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ")
+impl Resolve for ScriptResolver {
+    fn resolve(&self, base: &FileName, module_specifier: &str) -> Result<swc_ecma_loader::resolve::Resolution, Error> {
+        let resolved = if module_specifier.starts_with("http://")
+            || module_specifier.starts_with("https://")
+        {
+            FileName::Custom(module_specifier.to_string())
+        } else if module_specifier.starts_with("/js/") {
+            self.resolve_spec(module_specifier)?
+        } else {
+            match base {
+                FileName::Real(path) => {
+                    let parent = path
+                        .parent()
+                        .map(|p| p.to_path_buf())
+                        .unwrap_or_else(|| PathBuf::from("."));
+                    let mut joined = parent.join(module_specifier);
+                    if joined.extension().is_none() {
+                        // Try TypeScript first; these sources live alongside.
+                        joined.set_extension("ts");
+                    } else if joined
+                        .extension()
+                        .map(|e| e == "js")
+                        .unwrap_or(false)
+                    {
+                        joined.set_extension("ts");
+                    }
+                    FileName::Real(joined)
+                }
+                _ => return Err(Error::msg("unsupported base filename")),
+            }
+        };
+
+        Ok(swc_ecma_loader::resolve::Resolution {
+            filename: resolved,
+            slug: None,
+        })
+    }
 }
 
-fn to_data_url(js: &str) -> String {
-    let encoded = BASE64.encode(js);
-    format!("data:application/javascript;base64,{encoded}")
+struct FsLoader {
+    cm: Lrc<SourceMap>,
+}
+
+impl Load for FsLoader {
+    fn load(&self, file: &FileName) -> Result<ModuleData, Error> {
+        let path = match file {
+            FileName::Real(p) => p.clone(),
+            _ => return Err(Error::msg("unsupported filename kind for loader")),
+        };
+
+        let emitter = EmitterWriter::new(
+            Box::new(std::io::stderr()),
+            Some(self.cm.clone()),
+            false,
+            false,
+        );
+        let handler = Handler::with_emitter(true, false, Box::new(emitter));
+
+        let fm = self
+            .cm
+            .load_file(&path)
+            .with_context(|| format!("loading script {}", path.display()))?;
+
+        let syntax = Syntax::Typescript(TsSyntax {
+            tsx: false,
+            decorators: true,
+            dts: false,
+            ..Default::default()
+        });
+
+        let lexer = Lexer::new(
+            syntax,
+            EsVersion::Es2022,
+            StringInput::from(&*fm),
+            None,
+        );
+        let mut parser = Parser::new_from(lexer);
+        let mut module = parser.parse_module().map_err(|e| {
+            let mut diag = e.into_diagnostic(&handler);
+            diag.emit();
+            Error::msg("failed to parse module")
+        })?;
+
+        // Strip TypeScript types so downstream bundler passes don't see TS nodes.
+        module.visit_mut_with(&mut strip_type());
+
+        Ok(ModuleData {
+            fm,
+            module,
+            helpers: Helpers::new(false),
+        })
+    }
+}
+
+fn emit_minified(module: &Module, cm: Lrc<SourceMap>, globals: &Globals) -> Result<String> {
+
+    GLOBALS.set(globals, || {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        // Run resolver to set syntax contexts.
+        let mut resolved = module.clone();
+        // typescript = true so TS syntax contexts are handled correctly
+        resolved.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, true));
+
+        let program = Program::Module(resolved);
+
+        let mut buf = Vec::new();
+        {
+            let mut cfg = swc_ecma_codegen::Config::default();
+            cfg.minify = true;
+            cfg.target = EsVersion::Es2016;
+
+            let mut emitter = Emitter {
+                cfg,
+                comments: None,
+                cm: cm.clone(),
+                wr: JsWriter::new(cm.clone(), "\n", &mut buf, None),
+            };
+
+            emitter.emit_program(&program)?;
+        }
+
+        let out = String::from_utf8(buf)?;
+        Ok(out)
+    })
 }

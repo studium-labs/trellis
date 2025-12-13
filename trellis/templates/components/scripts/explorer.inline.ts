@@ -1,5 +1,20 @@
-import { FileTrieNode } from "/js/util/fileTrie";
-import { resolveRelative, simplifySlug } from "/js/util/path";
+import { FileTrieNode } from "../../util/fileTrie";
+import { resolveRelative, simplifySlug } from "../../util/path";
+
+type ExplorerStateEntry = { path: string; collapsed: boolean };
+type ExplorerOrderStep = "filter" | "map" | "sort";
+type ExplorerOptions = {
+  folderClickBehavior: "collapse" | "link" | "mixed";
+  folderDefaultState: "collapsed" | "open";
+  useSavedState: boolean;
+  order: ExplorerOrderStep[];
+  sortFn?: (...args: any[]) => any;
+  filterFn?: (...args: any[]) => boolean;
+  mapFn?: (...args: any[]) => void;
+};
+
+const isElement = (target: EventTarget | null): target is Element =>
+  target instanceof Element;
 
 // Trellis renders without the SPA router, so `window.addCleanup` can be undefined.
 const registerCleanup =
@@ -8,9 +23,9 @@ const registerCleanup =
     : null;
 
 // Always keep folder state as a concrete array so toggle handlers never crash.
-let currentExplorerState = [];
+let currentExplorerState: ExplorerStateEntry[] = [];
 
-function loadSavedState(useSavedState) {
+function loadSavedState(useSavedState: boolean): ExplorerStateEntry[] {
   if (!useSavedState) return [];
   const storageTree = localStorage.getItem("fileTree");
   if (!storageTree) return [];
@@ -21,27 +36,52 @@ function loadSavedState(useSavedState) {
     return [];
   }
 }
-function attachFolderToggles(explorer) {
-  const folderButtons = explorer.getElementsByClassName("folder-button");
-  for (const button of folderButtons) {
-    button.addEventListener("click", toggleFolder);
-    registerCleanup?.(() => button.removeEventListener("click", toggleFolder));
-  }
 
-  const folderIcons = explorer.getElementsByClassName("folder-icon");
-  for (const icon of folderIcons) {
-    icon.addEventListener("click", toggleFolder);
-    registerCleanup?.(() => icon.removeEventListener("click", toggleFolder));
+function findFolderOuter(folderContainer: Element | null): HTMLElement | null {
+  if (!folderContainer) return null;
+  // Prefer the sibling structure we render server-side.
+  const sibling = folderContainer.nextElementSibling;
+  if (sibling?.classList.contains("folder-outer")) {
+    return sibling as HTMLElement;
+  }
+  // Fallback: scoped query in case DOM is rewritten.
+  return (
+    folderContainer.closest("li")?.querySelector(":scope > .folder-outer") ??
+    null
+  );
+}
+
+function attachFolderToggles(explorer: Element, opts: ExplorerOptions) {
+  const containers = explorer.getElementsByClassName("folder-container");
+  for (const container of containers) {
+    const typedContainer = container as HTMLElement;
+
+    // Chevron toggles always.
+    const icon = typedContainer.querySelector<HTMLElement>(".folder-icon");
+    if (icon) {
+      const iconHandler = (evt: MouseEvent) => {
+        evt.stopPropagation();
+        toggleFolder(evt, typedContainer);
+      };
+      icon.addEventListener("click", iconHandler);
+      registerCleanup?.(() => icon.removeEventListener("click", iconHandler));
+    }
+
+    // When behavior is "collapse" or "mixed", also allow clicking the label/button container.
+    if (opts.folderClickBehavior !== "link") {
+      const handler = (evt: MouseEvent) => toggleFolder(evt, typedContainer);
+      typedContainer.addEventListener("click", handler);
+      registerCleanup?.(() =>
+        typedContainer.removeEventListener("click", handler)
+      );
+    }
   }
 }
-function toggleExplorer() {
-  const nearestExplorer = this.closest(".explorer");
+function toggleExplorer(this: HTMLElement) {
+  const nearestExplorer = this.closest<HTMLElement>(".explorer");
   if (!nearestExplorer) return;
   const explorerCollapsed = nearestExplorer.classList.toggle("collapsed");
-  nearestExplorer.setAttribute(
-    "aria-expanded",
-    nearestExplorer.getAttribute("aria-expanded") === "true" ? "false" : "true"
-  );
+  nearestExplorer.setAttribute("aria-expanded", explorerCollapsed ? "false" : "true");
 
   if (!explorerCollapsed) {
     // Stop <html> from being scrollable when mobile explorer is open
@@ -51,27 +91,26 @@ function toggleExplorer() {
   }
 }
 
-function toggleFolder(evt) {
+function toggleFolder(evt: MouseEvent, providedContainer?: HTMLElement) {
   evt.stopPropagation();
-  const target = evt.target;
-  if (!target) return;
 
-  // Check if target was svg icon or button
-  const isSvg = target.nodeName === "svg";
+  const folderContainer =
+    providedContainer ??
+    (isElement(evt.target)
+      ? evt.target.closest<HTMLElement>(".folder-container")
+      : null);
 
-  // corresponding <ul> element relative to clicked button/folder
-  const folderContainer = isSvg // svg -> div.folder-container
-    ? target.parentElement // button.folder-button -> div -> div.folder-container
-    : target.parentElement?.parentElement;
   if (!folderContainer) return;
-  const childFolderContainer = folderContainer.nextElementSibling;
+
+  const childFolderContainer = findFolderOuter(folderContainer);
   if (!childFolderContainer) return;
 
-  childFolderContainer.classList.toggle("open");
+  const isOpen = !childFolderContainer.classList.contains("open");
+  setFolderState(childFolderContainer, !isOpen);
+  folderContainer.setAttribute("aria-expanded", isOpen ? "true" : "false");
 
   // Collapse folder container
-  const isCollapsed = !childFolderContainer.classList.contains("open");
-  setFolderState(childFolderContainer, isCollapsed);
+  const isCollapsed = !isOpen;
 
   const folderPath =
     folderContainer.dataset.folderpath ||
@@ -94,7 +133,7 @@ function toggleFolder(evt) {
   localStorage.setItem("fileTree", stringifiedFileTree);
 }
 
-function createFileNode(currentSlug, node) {
+function createFileNode(currentSlug: string, node) {
   const template = document.getElementById("template-file");
   const clone = template.content.cloneNode(true);
   const li = clone.querySelector("li");
@@ -110,7 +149,7 @@ function createFileNode(currentSlug, node) {
   return li;
 }
 
-function createFolderNode(currentSlug, node, opts) {
+function createFolderNode(currentSlug: string, node, opts: ExplorerOptions) {
   const template = document.getElementById("template-folder");
   const clone = template.content.cloneNode(true);
   const li = clone.querySelector("li");
@@ -147,9 +186,11 @@ function createFolderNode(currentSlug, node, opts) {
   const folderIsPrefixOfCurrentSlug =
     simpleFolderPath === currentSlug.slice(0, simpleFolderPath.length);
 
-  if (!isCollapsed || folderIsPrefixOfCurrentSlug) {
+  const shouldBeOpen = !isCollapsed || folderIsPrefixOfCurrentSlug;
+  if (shouldBeOpen) {
     folderOuter.classList.add("open");
   }
+  folderContainer.setAttribute("aria-expanded", shouldBeOpen ? "true" : "false");
 
   for (const child of node.children) {
     const childNode = child.isFolder
@@ -161,7 +202,7 @@ function createFolderNode(currentSlug, node, opts) {
   return li;
 }
 
-async function setupExplorer(currentSlug) {
+async function setupExplorer(currentSlug: string) {
   const allExplorers = document.querySelectorAll("div.explorer");
 
   for (const explorer of allExplorers) {
@@ -175,9 +216,13 @@ async function setupExplorer(currentSlug) {
     }
 
     const dataFns = JSON.parse(explorer.dataset.dataFns || "{}");
-    const opts = {
-      folderClickBehavior: explorer.dataset.behavior || "collapse",
-      folderDefaultState: explorer.dataset.collapsed || "collapsed",
+    const opts: ExplorerOptions = {
+      folderClickBehavior:
+        (explorer.dataset.behavior as ExplorerOptions["folderClickBehavior"]) ||
+        "collapse",
+      folderDefaultState:
+        (explorer.dataset.collapsed as ExplorerOptions["folderDefaultState"]) ||
+        "collapsed",
       useSavedState: explorer.dataset.savestate === "true",
       order: dataFns.order || ["filter", "map", "sort"],
       sortFn: new Function("return " + (dataFns.sortFn || "undefined"))(),
@@ -196,7 +241,7 @@ async function setupExplorer(currentSlug) {
     // server-rendered list and still wire toggles.
     if (typeof fetchData === "undefined") {
       applyStateToServerTree(explorer, opts);
-      attachFolderToggles(explorer);
+      attachFolderToggles(explorer, opts);
       continue;
     }
 
@@ -208,7 +253,7 @@ async function setupExplorer(currentSlug) {
     } catch (err) {
       console.warn("Explorer: failed to load content index", err);
       applyStateToServerTree(explorer, opts);
-      attachFolderToggles(explorer);
+      attachFolderToggles(explorer, opts);
       continue;
     }
 
@@ -276,17 +321,14 @@ async function setupExplorer(currentSlug) {
     }
 
     // Set up event handlers
-    // Set up folder click handlers
-    if (opts.folderClickBehavior === "collapse") {
-      attachFolderToggles(explorer);
-    }
+    attachFolderToggles(explorer, opts);
   }
 }
 
-function applyStateToServerTree(explorer, opts) {
+function applyStateToServerTree(explorer, opts: ExplorerOptions) {
   const folderContainers = explorer.querySelectorAll(".folder-container");
   for (const container of folderContainers) {
-    const folderOuter = container.nextElementSibling;
+    const folderOuter = findFolderOuter(container);
     if (!folderOuter) continue;
 
     const folderPath =
@@ -299,6 +341,10 @@ function applyStateToServerTree(explorer, opts) {
       saved?.collapsed ?? opts.folderDefaultState === "collapsed";
 
     setFolderState(folderOuter, shouldCollapse);
+    (container as HTMLElement).setAttribute(
+      "aria-expanded",
+      shouldCollapse ? "false" : "true"
+    );
 
     if (!saved) {
       currentExplorerState.push({
@@ -309,20 +355,18 @@ function applyStateToServerTree(explorer, opts) {
   }
 }
 
-// In Trellis (non-SPA) the `nav` event is never emitted, so hydrate once on load.
-if (!registerCleanup) {
-  const hydrateExplorer = () => {
-    const currentSlug = window.location.pathname.slice(1) || "index";
-    setupExplorer(currentSlug);
-  };
+// Hydrate explorer on initial load (SPA and non-SPA) to ensure toggles are wired.
+const hydrateExplorer = () => {
+  const currentSlug = window.location.pathname.slice(1) || "index";
+  setupExplorer(currentSlug);
+};
 
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", hydrateExplorer, {
-      once: true,
-    });
-  } else {
-    hydrateExplorer();
-  }
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", hydrateExplorer, {
+    once: true,
+  });
+} else {
+  hydrateExplorer();
 }
 
 document.addEventListener("prenav", async () => {
@@ -363,8 +407,25 @@ window.addEventListener("resize", function () {
   }
 });
 
-function setFolderState(folderElement, collapsed) {
+function setFolderState(folderElement: Element, collapsed: boolean) {
   return collapsed
     ? folderElement.classList.remove("open")
     : folderElement.classList.add("open");
 }
+
+// Global delegated fallback to capture clicks on nested SVG/polyline nodes.
+(function ensureDelegatedFolderToggle() {
+  const handler = (evt) => {
+    if (!isElement(evt.target)) return;
+    // Only react to chevrons or folder buttons to avoid hijacking link clicks.
+    const icon = evt.target.closest?.(".folder-icon");
+    const button = evt.target.closest?.(".folder-button");
+    if (!icon && !button) return;
+    const folderContainer = evt.target.closest?.(".folder-container");
+    if (!folderContainer) return;
+    if (!folderContainer.closest(".explorer")) return;
+    toggleFolder(evt, folderContainer);
+  };
+  document.addEventListener("click", handler);
+  registerCleanup?.(() => document.removeEventListener("click", handler));
+})();

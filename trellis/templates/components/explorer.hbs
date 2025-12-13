@@ -139,7 +139,11 @@
         {{#each nav}}
           {{#if children}}
             <li>
-              <div class="folder-container" data-folderpath="{{path}}/index">
+              <div
+                class="folder-container"
+                data-folderpath="{{path}}/index"
+                aria-expanded="false"
+              >
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
                   width="14"
@@ -189,7 +193,7 @@
 
   <template id="template-folder">
     <li>
-      <div class="folder-container">
+      <div class="folder-container" aria-expanded="false">
         <svg
           xmlns="http://www.w3.org/2000/svg"
           width="14"

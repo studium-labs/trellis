@@ -1,17 +1,21 @@
-# Trellis
+# 🌱 Trellis
 
-> We are cups, constantly and quietly being filled. The trick is knowing how to tip ourselves over and let the beautiful stuff out.
->
-> ~ Ray Bradbury
+> The greatest service which can be rendered any country is to add a useful plant to its culture.
+> ~ Thomas Jefferson
 
-Trellis is a set of tools that helps you publish your markdown notes as a [digital garden](https://studium.dev/) website for free.
-Trellis is currently pre-alpha and we can't yet recommend using this project seriously yet. To see our current progress you can view [the roadmap here](./content/roadmap-and-changelog.md).
+Trellis is an open source toolchain and server that helps you publish Markdown notes as a **[digital garden**](https://medium.com/%40raysims/a-digital-garden-inventory-d6450fe74b4). Fast, opinionated, and built for long-lived knowledge rather than disposable posts. Trellis is currently pre-alpha but developing quickly, we're looking for early tester and new ideas for the digital gardens world.
 
-<!-- Read the documentation and get started: https://trellis.studium.dev/ -->
+<!-- Read the documentation to get started today: https://trellis.studium.dev/ -->
 
-[Join the Trellis Discord](https://discord.gg/J6J8szStkd)
+## Trellis: Resources
 
-## Thank you Quartz Creators!
+Learn more about Trellis:
+
+- https://github.com/studium-labs/trellis
+- [Roadmap & changelog](https://github.com/studium-labs/trellis/blob/main/content/roadmap-and-changelog.md)
+- [Community & discussion](https://discord.gg/XF6ZBGF9XF) _(Discord)_
+
+### Thank you Quartz Creators!
 
 Quartz is the original inspiration and the author(s) of lots of styling and HTML code found in this project. Check them out to learn who/what inspired me to build the Rust version!
 
@@ -19,6 +23,12 @@ Quartz is the original inspiration and the author(s) of lots of styling and HTML
 - https://github.com/jackyzha0/quartz
 - [Join the Quartz Discord](https://discord.gg/cRFFHYye7t)
 
-> One who works with the door open gets all kinds of interruptions, but they also occasionally gets clues as to what the world is and what might be important.
->
-> ~ Richard Hamming
+## Latest Release
+
+### Version 0.2.0
+
+> Change the graph, change the world.
+
+- Added graph view.
+- Fixed chevron icon flashing on URL change.
+- Ported JavaScript to TypeScript compiled by SWC

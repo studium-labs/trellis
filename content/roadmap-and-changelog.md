@@ -70,6 +70,7 @@ The following feature ideas are listed in no particular order and may or may not
 
 - Added graph view.
 - Fixed chevron icon flashing on URL change.
+- Ported JavaScript to TypeScript compiled by SWC
 
 ### Version 0.1.0
 

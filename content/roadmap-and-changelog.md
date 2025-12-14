@@ -62,12 +62,21 @@ The following feature ideas are listed in no particular order and may or may not
 
 ## Released
 
+<!-- ### 0.3.0 -->
+
+### Version 0.2.0
+
+> Change the graph, change the world.
+
+- Added graph view.
+- Fixed chevron icon flashing on URL change.
+
 ### Version 0.1.0
 
-In this release we have added:
+> One small step.
 
-- Callouts
-- Private password protected pages
-- Mobile Explorer Overlay
-- Explorer
-- Mermaid Diagrams
+- Added callouts.
+- Added private password protected pages.
+- Added mobile explorer overlay.
+- Added explorer sidebar.
+- Added mermaid diagrams.

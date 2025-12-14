@@ -3,7 +3,7 @@
 > The greatest service which can be rendered any country is to add a useful plant to its culture.
 > ~ Thomas Jefferson
 
-Trellis is an open source toolchain and server that helps you publish Markdown notes as a **[digital garden**](https://medium.com/%40raysims/a-digital-garden-inventory-d6450fe74b4). Fast, opinionated, and built for long-lived knowledge rather than disposable posts. Trellis is currently pre-alpha but developing quickly, we're looking for early tester and new ideas for the digital gardens world.
+Trellis is an open source toolchain and server that helps you publish Markdown notes as a [**digital garden**](https://medium.com/%40raysims/a-digital-garden-inventory-d6450fe74b4). Fast, opinionated, and built for long-lived knowledge rather than disposable posts. Trellis is currently pre-alpha but developing quickly, we're looking for early tester and new ideas for the digital gardens world.
 
 <!-- Read the documentation to get started today: https://trellis.studium.dev/ -->
 

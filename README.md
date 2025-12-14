@@ -17,11 +17,8 @@ Learn more about Trellis:
 
 ### Thank you Quartz Creators!
 
-Quartz is the original inspiration and the author(s) of lots of styling and HTML code found in this project. Check them out to learn who/what inspired me to build the Rust version!
-
-- https://quartz.jzhao.xyz/
-- https://github.com/jackyzha0/quartz
-- [Join the Quartz Discord](https://discord.gg/cRFFHYye7t)
+Quartz is the original inspiration and the author(s) of lots of styling and HTML code found in this project.
+Check them out to learn who/what inspired me to build the Rust version: https://github.com/jackyzha0/quartz
 
 ## Latest Release
 

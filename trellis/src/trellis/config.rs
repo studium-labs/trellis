@@ -353,10 +353,9 @@ fn join_segments(base: &str, tail: &str) -> String {
 }
 
 /// Build the per-page resource list, mirroring Quartz's `pageResources` helper.
-/// `base_dir` should be the relative path from the current page to the site root
-/// (e.g., ".", "..", "../../").
+/// `base_dir` should be the relative path from the current page to the site root (e.g., ".", "..", "../../").
 pub fn page_resources(base_dir: &str, static_resources: &ComponentResources) -> ComponentResources {
-    let content_index_path = join_segments(base_dir, "static/contentIndex.json");
+    let content_index_path = join_segments(base_dir, "static/content-index.json");
     let content_index_script = format!(
         "const fetchData = fetch(\"{}\").then(data => data.json())",
         content_index_path

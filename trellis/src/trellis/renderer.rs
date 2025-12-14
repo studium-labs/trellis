@@ -120,6 +120,16 @@ impl TrellisEngine {
         path
     }
 
+    /// Path to the configured cache root (build output).
+    pub fn cache_root(&self) -> &Path {
+        &self.cache_root
+    }
+
+    /// Path to the configured content root.
+    pub fn content_root(&self) -> &Path {
+        &self.content_root
+    }
+
     fn load_page(&self, slug: &str, path: &Path) -> Result<Page> {
         if self.is_ignored_slug(slug) {
             return Err(io::Error::new(

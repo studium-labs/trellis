@@ -1,11 +1,12 @@
 pub mod bundler;
 pub mod cache;
 pub mod config;
+pub mod content_index;
 pub mod layout;
 pub mod plugins;
 pub mod renderer;
-pub mod types;
 pub mod styles;
+pub mod types;
 
 use std::sync::OnceLock;
 

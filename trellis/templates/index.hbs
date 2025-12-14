@@ -9,7 +9,7 @@
     <link href="{{fonts_href}}" rel="stylesheet" />
     <style>{{{styles}}}</style>
   </head>
-  <body>
+  <body data-slug="{{article.slug}}">
     <div id="trellis-root" class="page">
       <div id="trellis-body">
         <aside class="left sidebar">
@@ -61,15 +61,15 @@
         </main>
 
         <aside class="right sidebar">
-          <div class="graph">
-            <h3>Graph</h3>
-            <p>Graph view placeholder.</p>
-          </div>
+          {{> components/graph}}
         </aside>
       </div>
 
     </div>
 
+    <script>
+      const fetchData = fetch("/static/content-index.json").then(r => r.json()).catch(() => undefined);
+    </script>
     {{#if scripts.explorer}}
       <script type="module">{{{scripts.explorer}}}</script>
     {{/if}}
@@ -81,6 +81,9 @@
     {{/if}}
     {{#if scripts.callouts}}
       <script type="module">{{{scripts.callouts}}}</script>
+    {{/if}}
+    {{#if scripts.graph}}
+      <script type="module">{{{scripts.graph}}}</script>
     {{/if}}
     {{#if scripts.mermaid}}
       <script type="module">{{{scripts.mermaid}}}</script>

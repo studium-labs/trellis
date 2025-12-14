@@ -58,7 +58,7 @@ The following feature ideas are listed in no particular order and may or may not
 - Subscript
 - Superscript
 - Support multi-column & dropdowns
-- 
+- Guestbook
 
 ## Released
 

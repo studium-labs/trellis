@@ -1,8 +1,8 @@
-mod callouts;
-mod encryption;
-mod frontmatter;
-mod markdown;
-mod mermaid;
+pub mod callouts;
+pub mod encryption;
+pub mod frontmatter;
+pub mod markdown;
+pub mod mermaid;
 pub mod traits;
 
 use anyhow::Result;

@@ -10,13 +10,13 @@ use serde::Serialize;
 use swc_atoms::Atom;
 use swc_bundler::{Bundle, Bundler, Config, Hook, Load, ModuleData, ModuleType, Resolve};
 use swc_common::errors::{EmitterWriter, Handler};
-use swc_common::{sync::Lrc, FileName, Globals, Mark, SourceMap, GLOBALS};
-use swc_ecma_ast::{EsVersion, Module, Program, KeyValueProp};
-use swc_ecma_codegen::{text_writer::JsWriter, Emitter};
+use swc_common::{FileName, GLOBALS, Globals, Mark, SourceMap, sync::Lrc};
+use swc_ecma_ast::{EsVersion, KeyValueProp, Module, Program};
+use swc_ecma_codegen::{Emitter, text_writer::JsWriter};
 use swc_ecma_parser::lexer::Lexer;
 use swc_ecma_parser::{Parser, StringInput, Syntax, TsSyntax};
-use swc_ecma_transforms_base::resolver;
 use swc_ecma_transforms_base::helpers::Helpers;
+use swc_ecma_transforms_base::resolver;
 use swc_ecma_transforms_typescript::strip_type;
 use swc_ecma_visit::VisitMutWith;
 
@@ -27,6 +27,7 @@ pub enum ScriptKind {
     EncryptedNote,
     Mermaid,
     Callouts,
+    Graph,
 }
 
 #[derive(Debug, Serialize, Clone, Default)]
@@ -41,6 +42,8 @@ pub struct InlineScripts {
     pub mermaid: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub callouts: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graph: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -50,6 +53,7 @@ pub struct ScriptNeeds {
     pub encrypted_note: bool,
     pub mermaid: bool,
     pub callouts: bool,
+    pub graph: bool,
 }
 
 pub fn inline_scripts(needs: ScriptNeeds) -> InlineScripts {
@@ -72,7 +76,12 @@ pub fn inline_scripts(needs: ScriptNeeds) -> InlineScripts {
                         .flatten(),
                     overlay_explorer: needs
                         .overlay_explorer
-                        .then(|| cache_guard.bundles.get(&ScriptKind::OverlayExplorer).cloned())
+                        .then(|| {
+                            cache_guard
+                                .bundles
+                                .get(&ScriptKind::OverlayExplorer)
+                                .cloned()
+                        })
                         .flatten(),
                     encrypted_note: needs
                         .encrypted_note
@@ -86,6 +95,10 @@ pub fn inline_scripts(needs: ScriptNeeds) -> InlineScripts {
                         .callouts
                         .then(|| cache_guard.bundles.get(&ScriptKind::Callouts).cloned())
                         .flatten(),
+                    graph: needs
+                        .graph
+                        .then(|| cache_guard.bundles.get(&ScriptKind::Graph).cloned())
+                        .flatten(),
                 };
             }
         }
@@ -98,7 +111,10 @@ pub fn inline_scripts(needs: ScriptNeeds) -> InlineScripts {
                 cache_guard.mtime = mtime;
             }
             InlineScripts {
-                explorer: needs.explorer.then(|| bundles.get(&ScriptKind::Explorer).cloned()).flatten(),
+                explorer: needs
+                    .explorer
+                    .then(|| bundles.get(&ScriptKind::Explorer).cloned())
+                    .flatten(),
                 overlay_explorer: needs
                     .overlay_explorer
                     .then(|| bundles.get(&ScriptKind::OverlayExplorer).cloned())
@@ -107,8 +123,18 @@ pub fn inline_scripts(needs: ScriptNeeds) -> InlineScripts {
                     .encrypted_note
                     .then(|| bundles.get(&ScriptKind::EncryptedNote).cloned())
                     .flatten(),
-                mermaid: needs.mermaid.then(|| bundles.get(&ScriptKind::Mermaid).cloned()).flatten(),
-                callouts: needs.callouts.then(|| bundles.get(&ScriptKind::Callouts).cloned()).flatten(),
+                mermaid: needs
+                    .mermaid
+                    .then(|| bundles.get(&ScriptKind::Mermaid).cloned())
+                    .flatten(),
+                callouts: needs
+                    .callouts
+                    .then(|| bundles.get(&ScriptKind::Callouts).cloned())
+                    .flatten(),
+                graph: needs
+                    .graph
+                    .then(|| bundles.get(&ScriptKind::Graph).cloned())
+                    .flatten(),
             }
         }
         Err(err) => {
@@ -153,7 +179,10 @@ fn build_all_bundles() -> Result<(HashMap<ScriptKind, String>, SystemTime)> {
     let component_root = templates_root.join("components/scripts");
 
     let entries = vec![
-        (ScriptKind::Explorer, component_root.join("explorer.inline.ts")),
+        (
+            ScriptKind::Explorer,
+            component_root.join("explorer.inline.ts"),
+        ),
         (
             ScriptKind::OverlayExplorer,
             component_root.join("overlay-explorer.inline.ts"),
@@ -162,8 +191,15 @@ fn build_all_bundles() -> Result<(HashMap<ScriptKind, String>, SystemTime)> {
             ScriptKind::EncryptedNote,
             component_root.join("encrypted-note.inline.ts"),
         ),
-        (ScriptKind::Mermaid, component_root.join("mermaid.inline.ts")),
-        (ScriptKind::Callouts, component_root.join("callouts.inline.ts")),
+        (
+            ScriptKind::Mermaid,
+            component_root.join("mermaid.inline.ts"),
+        ),
+        (
+            ScriptKind::Callouts,
+            component_root.join("callouts.inline.ts"),
+        ),
+        (ScriptKind::Graph, component_root.join("graph.inline.ts")),
     ];
 
     let mut bundles = HashMap::new();
@@ -279,7 +315,11 @@ impl ScriptResolver {
 }
 
 impl Resolve for ScriptResolver {
-    fn resolve(&self, base: &FileName, module_specifier: &str) -> Result<swc_ecma_loader::resolve::Resolution, Error> {
+    fn resolve(
+        &self,
+        base: &FileName,
+        module_specifier: &str,
+    ) -> Result<swc_ecma_loader::resolve::Resolution, Error> {
         let resolved = if module_specifier.starts_with("http://")
             || module_specifier.starts_with("https://")
         {
@@ -297,11 +337,7 @@ impl Resolve for ScriptResolver {
                     if joined.extension().is_none() {
                         // Try TypeScript first; these sources live alongside.
                         joined.set_extension("ts");
-                    } else if joined
-                        .extension()
-                        .map(|e| e == "js")
-                        .unwrap_or(false)
-                    {
+                    } else if joined.extension().map(|e| e == "js").unwrap_or(false) {
                         joined.set_extension("ts");
                     }
                     FileName::Real(joined)
@@ -348,12 +384,7 @@ impl Load for FsLoader {
             ..Default::default()
         });
 
-        let lexer = Lexer::new(
-            syntax,
-            EsVersion::Es2022,
-            StringInput::from(&*fm),
-            None,
-        );
+        let lexer = Lexer::new(syntax, EsVersion::Es2022, StringInput::from(&*fm), None);
         let mut parser = Parser::new_from(lexer);
         let mut module = parser.parse_module().map_err(|e| {
             let mut diag = e.into_diagnostic(&handler);
@@ -373,7 +404,6 @@ impl Load for FsLoader {
 }
 
 fn emit_minified(module: &Module, cm: Lrc<SourceMap>, globals: &Globals) -> Result<String> {
-
     GLOBALS.set(globals, || {
         let unresolved_mark = Mark::new();
         let top_level_mark = Mark::new();

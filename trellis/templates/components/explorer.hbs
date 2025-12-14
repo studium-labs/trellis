@@ -142,7 +142,7 @@
               <div
                 class="folder-container"
                 data-folderpath="{{path}}/index"
-                aria-expanded="false"
+                aria-expanded="{{#if open}}true{{else}}false{{/if}}"
               >
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
@@ -164,7 +164,7 @@
                   </button>
                 </div>
               </div>
-              <div class="folder-outer">
+              <div class="folder-outer{{#if open}} open{{/if}}">
                 <ul class="content">
                   {{#each children}}
                     <li><a class="internal" href="/{{path}}">{{title}}</a></li>

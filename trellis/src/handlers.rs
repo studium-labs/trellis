@@ -1,19 +1,22 @@
 use std::sync::{OnceLock, RwLock};
 use std::time::SystemTime;
 
+use actix_files::Files;
 use actix_web::{HttpResponse, HttpResponseBuilder, Responder, get, web};
 use handlebars::Handlebars;
 use log::error;
 use serde::Serialize;
+use serde_json;
 use serde_json::json;
 use serde_yaml;
 use std::fs;
 
 use crate::trellis::bundler::{InlineScripts, ScriptNeeds, inline_scripts};
 use crate::trellis::config::google_font_href;
+use crate::trellis::content_index::generate_content_index;
+use crate::trellis::layout::LayoutComponent;
 use crate::trellis::styles::compiled_styles;
 use crate::trellis::types::{RenderedPage, slug_from_path};
-use crate::trellis::layout::LayoutComponent;
 use crate::trellis::{SiteConfig, TrellisEngine, trellis_engine};
 
 use chrono::{Datelike, Utc};
@@ -26,6 +29,14 @@ pub fn config(conf: &mut web::ServiceConfig) {
 
     // Prebuild markdown to cache and collect slugs
     let engine = trellis_engine();
+    if let Err(err) = generate_content_index(
+        engine.content_root(),
+        engine.cache_root(),
+        &engine.config.configuration.ignore_patterns,
+    ) {
+        error!("failed to generate content index: {err}");
+    }
+
     let mut slugs: Vec<String> = engine.prebuild_all().unwrap_or_default();
     if let Ok(mut cached) = engine.cached_slugs() {
         slugs.append(&mut cached);
@@ -47,6 +58,11 @@ pub fn config(conf: &mut web::ServiceConfig) {
         );
 
     conf.service(api_scope);
+    conf.service(
+        Files::new("/static", engine.cache_root().join("static"))
+            .prefer_utf8(true)
+            .use_last_modified(true),
+    );
     conf.service(site_scope);
 }
 
@@ -114,6 +130,8 @@ fn render(
 struct NavItem {
     title: String,
     path: String,
+    #[serde(skip_serializing_if = "is_false")]
+    open: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     children: Option<Vec<NavLeaf>>,
 }
@@ -130,6 +148,7 @@ struct HomeContext<'a> {
     nav: Vec<NavItem>,
     article: ArticleContext,
     explorer: ExplorerContext,
+    graph: GraphContext,
     layout: LayoutContext<'a>,
     configuration: &'a SiteConfig,
     styles: String,
@@ -154,6 +173,13 @@ struct ExplorerContext {
     data_fns_json: String,
 }
 
+#[derive(Serialize, Clone)]
+struct GraphContext {
+    title: String,
+    local_cfg_json: String,
+    global_cfg_json: String,
+}
+
 #[derive(Serialize)]
 struct FooterContext {
     year: i32,
@@ -170,6 +196,7 @@ struct FooterLink {
 
 #[derive(Serialize)]
 struct ArticleContext {
+    slug: String,
     title: String,
     intro: String,
     created: String,
@@ -193,6 +220,7 @@ fn script_needs(page: &RenderedPage, layout: &LayoutContext) -> ScriptNeeds {
     let has_callouts = html.contains("class=\"callout\"");
     let encrypted = page.frontmatter.encrypted.unwrap_or(false);
     let has_explorer = layout_contains_explorer(layout);
+    let has_graph = layout_contains_graph(layout);
 
     ScriptNeeds {
         explorer: has_explorer,
@@ -200,6 +228,7 @@ fn script_needs(page: &RenderedPage, layout: &LayoutContext) -> ScriptNeeds {
         encrypted_note: encrypted,
         mermaid: has_mermaid,
         callouts: has_callouts,
+        graph: has_graph,
     }
 }
 
@@ -223,20 +252,57 @@ fn component_list_has_explorer(list: &[LayoutComponent]) -> bool {
 fn component_has_explorer(component: &LayoutComponent) -> bool {
     match component {
         LayoutComponent::Explorer(_) => true,
-        LayoutComponent::Flex(cfg) => cfg.components.iter().any(|item| component_has_explorer(&item.component)),
-        LayoutComponent::MobileOnly(inner)
-        | LayoutComponent::DesktopOnly(inner) => component_has_explorer(inner),
+        LayoutComponent::Flex(cfg) => cfg
+            .components
+            .iter()
+            .any(|item| component_has_explorer(&item.component)),
+        LayoutComponent::MobileOnly(inner) | LayoutComponent::DesktopOnly(inner) => {
+            component_has_explorer(inner)
+        }
         LayoutComponent::ConditionalRender(cond) => component_has_explorer(&cond.component),
+        _ => false,
+    }
+}
+
+fn layout_contains_graph(layout: &LayoutContext) -> bool {
+    component_list_has_graph(&layout.shared.header)
+        || component_list_has_graph(&layout.content.left)
+        || component_list_has_graph(&layout.content.before_body)
+        || component_list_has_graph(&layout.content.right)
+        || component_list_has_graph(&layout.list.left)
+        || component_list_has_graph(&layout.list.before_body)
+        || component_list_has_graph(&layout.list.right)
+        || matches!(layout.shared.head, LayoutComponent::Graph)
+        || matches!(layout.shared.footer, LayoutComponent::Graph)
+        || component_list_has_graph(&layout.shared.after_body)
+}
+
+fn component_list_has_graph(list: &[LayoutComponent]) -> bool {
+    list.iter().any(component_has_graph)
+}
+
+fn component_has_graph(component: &LayoutComponent) -> bool {
+    match component {
+        LayoutComponent::Graph => true,
+        LayoutComponent::Flex(cfg) => cfg
+            .components
+            .iter()
+            .any(|item| component_has_graph(&item.component)),
+        LayoutComponent::MobileOnly(inner) | LayoutComponent::DesktopOnly(inner) => {
+            component_has_graph(inner)
+        }
+        LayoutComponent::ConditionalRender(cond) => component_has_graph(&cond.component),
         _ => false,
     }
 }
 
 fn build_home_context<'a>(engine: &'a TrellisEngine, page: RenderedPage) -> HomeContext<'a> {
     let article = to_article(&page);
-    let nav = build_nav_from_content(&engine.config);
+    let nav = build_nav_from_content(&engine.config, &article.slug);
     let styles = compiled_styles(&engine.config);
     let fonts_href = google_font_href(&engine.config.configuration.theme);
     let footer = footer_context(&engine.config);
+    let graph = graph_context();
 
     let layout_ctx = LayoutContext {
         shared: &engine.shared_layout,
@@ -253,6 +319,7 @@ fn build_home_context<'a>(engine: &'a TrellisEngine, page: RenderedPage) -> Home
         nav,
         article,
         explorer: explorer_context(&engine.config),
+        graph,
         layout: layout_ctx,
         configuration: &engine.config,
         styles,
@@ -282,6 +349,64 @@ fn explorer_context(config: &SiteConfig) -> ExplorerContext {
     }
 }
 
+fn graph_context() -> GraphContext {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct D3Config<'a> {
+        drag: bool,
+        zoom: bool,
+        depth: i32,
+        scale: f32,
+        repel_force: f32,
+        center_force: f32,
+        link_distance: i32,
+        font_size: f32,
+        opacity_scale: f32,
+        remove_tags: &'a [&'a str],
+        show_tags: bool,
+        focus_on_hover: bool,
+        enable_radial: bool,
+    }
+
+    let local = D3Config {
+        drag: true,
+        zoom: true,
+        depth: 1,
+        scale: 1.1,
+        repel_force: 0.5,
+        center_force: 0.3,
+        link_distance: 30,
+        font_size: 0.6,
+        opacity_scale: 1.0,
+        remove_tags: &[],
+        show_tags: true,
+        focus_on_hover: false,
+        enable_radial: false,
+    };
+
+    let global = D3Config {
+        drag: true,
+        zoom: true,
+        depth: -1,
+        scale: 0.9,
+        repel_force: 0.5,
+        center_force: 0.2,
+        link_distance: 30,
+        font_size: 0.6,
+        opacity_scale: 1.0,
+        remove_tags: &[],
+        show_tags: true,
+        focus_on_hover: true,
+        enable_radial: true,
+    };
+
+    GraphContext {
+        title: "Graph".into(),
+        local_cfg_json: serde_json::to_string(&local).unwrap_or_else(|_| "{}".into()),
+        global_cfg_json: serde_json::to_string(&global).unwrap_or_else(|_| "{}".into()),
+    }
+}
+
 fn footer_context(config: &SiteConfig) -> FooterContext {
     let links = links_from_config(&config.layout.footer.links);
     FooterContext {
@@ -307,7 +432,11 @@ fn links_from_config(links: &BTreeMap<String, String>) -> Option<Vec<FooterLink>
     )
 }
 
-fn build_nav_from_content(config: &SiteConfig) -> Vec<NavItem> {
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
+fn build_nav_from_content(config: &SiteConfig, current_slug: &str) -> Vec<NavItem> {
     let content_root = resolve_path(
         Path::new(env!("CARGO_MANIFEST_DIR")),
         &config.paths.content_root,
@@ -322,21 +451,31 @@ fn build_nav_from_content(config: &SiteConfig) -> Vec<NavItem> {
         })
     });
 
-    if let Ok(guard) = cache.read() {
+    let cached = if let Ok(guard) = cache.read() {
         if guard.mtime >= latest {
-            return guard.nav.clone();
+            Some(guard.nav.clone())
+        } else {
+            None
         }
-    }
+    } else {
+        None
+    };
 
-    let nav = compute_nav(&content_root, &config.configuration.ignore_patterns);
+    let mut nav = cached.unwrap_or_else(|| {
+        let computed = compute_nav(&content_root, &config.configuration.ignore_patterns);
 
-    if let Ok(mut guard) = cache.write() {
-        // Only replace if fresher; avoids races with concurrent builders
-        if latest >= guard.mtime {
-            guard.mtime = latest;
-            guard.nav = nav.clone();
+        if let Ok(mut guard) = cache.write() {
+            // Only replace if fresher; avoids races with concurrent builders
+            if latest >= guard.mtime {
+                guard.mtime = latest;
+                guard.nav = computed.clone();
+            }
         }
-    }
+
+        computed
+    });
+
+    mark_nav_open(&mut nav, current_slug);
 
     nav
 }
@@ -472,11 +611,28 @@ fn compute_nav(content_root: &Path, ignore_patterns: &[String]) -> Vec<NavItem> 
         nav.push(NavItem {
             title,
             path: group.clone(),
+            open: false,
             children,
         });
     }
 
     nav
+}
+
+fn mark_nav_open(nav: &mut [NavItem], current_slug: &str) {
+    let normalized = current_slug.trim_end_matches('/');
+    for item in nav {
+        let group_prefix = format!("{}/", item.path);
+        let mut is_open = normalized == item.path || normalized.starts_with(&group_prefix);
+
+        if !is_open {
+            if let Some(children) = &item.children {
+                is_open = children.iter().any(|child| child.path == normalized);
+            }
+        }
+
+        item.open = is_open;
+    }
 }
 
 fn humanize_segment(segment: &str) -> String {
@@ -525,6 +681,7 @@ fn to_article(page: &RenderedPage) -> ArticleContext {
         .unwrap_or_else(|| page.html.split_whitespace().count().max(1) as u64);
 
     ArticleContext {
+        slug: page.slug.clone(),
         title: page.frontmatter.title.unwrap_or(String::new()),
         intro: page.frontmatter.description.unwrap_or(String::new()),
         created,

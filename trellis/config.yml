@@ -60,6 +60,10 @@ layout:
       - "filter"
       - "map"
       - "sort"
+  backlinks:
+    title: "Backlinks"
+    empty_text: ""
+    hide_when_empty: true
 
 server:
   host: 0.0.0.0

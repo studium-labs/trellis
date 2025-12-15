@@ -4,7 +4,6 @@ use confik::Configuration;
 use serde::{Deserialize, Serialize};
 
 use crate::trellis::config::SiteConfig;
-use crate::trellis::types::PageContext;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "kebab-case", tag = "type", content = "config")]
@@ -22,12 +21,11 @@ pub enum LayoutComponent {
     Explorer(ExplorerConfig),
     Graph,
     TableOfContents,
-    Backlinks,
+    Backlinks(BacklinksConfig),
     Spacer,
     Flex(FlexConfig),
     MobileOnly(Box<LayoutComponent>),
     DesktopOnly(Box<LayoutComponent>),
-    ConditionalRender(ConditionalRenderConfig),
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -58,33 +56,14 @@ pub struct FlexConfig {
     pub gap: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize)]
-pub enum Condition {
-    DisplayClassNot(String),
-    SlugNot(String),
-}
-
-impl Condition {
-    pub fn eval(&self, ctx: &PageContext) -> bool {
-        match self {
-            Condition::DisplayClassNot(dc) => ctx.display_class.as_deref() != Some(dc.as_str()),
-            Condition::SlugNot(slug) => ctx.slug.as_deref() != Some(slug.as_str()),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct ConditionalRenderConfig {
-    pub component: Box<LayoutComponent>,
-    pub condition: Condition,
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize, Default, Configuration)]
 pub struct LayoutConfig {
     #[serde(default)]
     pub footer: FooterConfig,
     #[serde(default)]
     pub explorer: ExplorerConfig,
+    #[serde(default)]
+    pub backlinks: BacklinksConfig,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Configuration, Default)]
@@ -105,6 +84,16 @@ pub struct ExplorerConfig {
     pub map_fn: String,
     #[serde(default = "default_order")]
     pub order: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Configuration, Default)]
+pub struct BacklinksConfig {
+    #[serde(default = "default_backlinks_title")]
+    pub title: String,
+    #[serde(default = "default_no_backlinks_text")]
+    pub empty_text: String,
+    #[serde(default = "default_hide_when_empty")]
+    pub hide_when_empty: bool,
 }
 
 fn default_explorer_title() -> String {
@@ -137,6 +126,18 @@ fn default_map_fn() -> String {
 
 fn default_order() -> Vec<String> {
     vec!["filter".into(), "map".into(), "sort".into()]
+}
+
+fn default_backlinks_title() -> String {
+    "Backlinks".into()
+}
+
+fn default_no_backlinks_text() -> String {
+    "No backlinks found.".into()
+}
+
+fn default_hide_when_empty() -> bool {
+    true
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Configuration)]
@@ -237,10 +238,7 @@ pub fn shared_layout(cfg: &SiteConfig) -> SharedLayout {
 pub fn default_content_page_layout() -> PageLayout {
     PageLayout {
         before_body: vec![
-            LayoutComponent::ConditionalRender(ConditionalRenderConfig {
-                component: Box::new(LayoutComponent::Breadcrumbs),
-                condition: Condition::SlugNot("index".into()),
-            }),
+            LayoutComponent::Breadcrumbs,
             LayoutComponent::ArticleTitle,
             LayoutComponent::ContentMeta,
             LayoutComponent::TagList,
@@ -254,7 +252,7 @@ pub fn default_content_page_layout() -> PageLayout {
         right: vec![
             LayoutComponent::Graph,
             LayoutComponent::DesktopOnly(Box::new(LayoutComponent::TableOfContents)),
-            LayoutComponent::Backlinks,
+            LayoutComponent::Backlinks(LayoutConfig::default().backlinks.clone()),
         ],
     }
 }

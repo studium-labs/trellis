@@ -11,9 +11,7 @@ pub mod types;
 use std::sync::OnceLock;
 
 pub use config::SiteConfig;
-pub use layout::{default_content_page_layout, default_list_page_layout, shared_layout};
 pub use renderer::TrellisEngine;
-pub use types::{PageContext, RenderedPage};
 
 pub fn trellis_engine() -> &'static TrellisEngine {
     static ENGINE: OnceLock<TrellisEngine> = OnceLock::new();

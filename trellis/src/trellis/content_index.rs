@@ -116,7 +116,7 @@ fn is_ignored(path: &Path, root: &Path, patterns: &[String]) -> bool {
     })
 }
 
-fn extract_links(content: &str) -> Vec<String> {
+pub fn extract_links(content: &str) -> Vec<String> {
     let mut links = Vec::new();
 
     // [[wikilink]]

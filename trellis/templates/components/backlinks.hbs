@@ -1,0 +1,22 @@
+{{! List backlinks to the current note }}
+{{#if backlinks.has_backlinks}}
+  <div class="backlinks">
+    <h3>{{backlinks.title}}</h3>
+    <ul class="overflow">
+      {{#each backlinks.items}}
+        <li>
+          <a class="internal" href="{{href}}">{{title}}</a>
+        </li>
+      {{/each}}
+    </ul>
+  </div>
+{{else}}
+  {{#unless backlinks.hide_when_empty}}
+    <div class="backlinks">
+      <h3>{{backlinks.title}}</h3>
+      <ul class="overflow">
+        <li>{{backlinks.empty_text}}</li>
+      </ul>
+    </div>
+  {{/unless}}
+{{/if}}

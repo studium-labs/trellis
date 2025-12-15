@@ -20,16 +20,6 @@ use swc_ecma_transforms_base::resolver;
 use swc_ecma_transforms_typescript::strip_type;
 use swc_ecma_visit::VisitMutWith;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ScriptKind {
-    Explorer,
-    OverlayExplorer,
-    EncryptedNote,
-    Mermaid,
-    Callouts,
-    Graph,
-}
-
 #[derive(Debug, Serialize, Clone, Default)]
 pub struct InlineScripts {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -56,16 +46,26 @@ pub struct ScriptNeeds {
     pub graph: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ScriptKind {
+    Explorer,
+    OverlayExplorer,
+    EncryptedNote,
+    Mermaid,
+    Callouts,
+    Graph,
+}
+
+static CACHE: OnceLock<RwLock<ScriptsCache>> = OnceLock::new();
+
 pub fn inline_scripts(needs: ScriptNeeds) -> InlineScripts {
-    static CACHE: OnceLock<RwLock<ScriptsCache>> = OnceLock::new();
+    let newest_mtime = newest_templates_mtime().unwrap_or(UNIX_EPOCH);
     let cache = CACHE.get_or_init(|| {
         RwLock::new(ScriptsCache {
             bundles: HashMap::new(),
             mtime: UNIX_EPOCH,
         })
     });
-
-    let newest_mtime = newest_templates_mtime().unwrap_or(UNIX_EPOCH);
     {
         if let Ok(cache_guard) = cache.read() {
             if cache_guard.mtime >= newest_mtime {

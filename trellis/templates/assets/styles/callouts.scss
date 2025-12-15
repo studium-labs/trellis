@@ -5,7 +5,7 @@
   border: 1px solid var(--border);
   background-color: var(--bg);
   border-radius: 5px;
-  padding: 0 1rem;
+  padding: 0 0.75rem;
   overflow-y: hidden;
   box-sizing: border-box;
 
@@ -14,7 +14,7 @@
     transition: grid-template-rows 0.1s cubic-bezier(0.02, 0.01, 0.47, 1);
     overflow: hidden;
 
-    & > :first-child {
+    & > :first-child > * {
       margin-top: 0;
     }
   }
@@ -146,7 +146,7 @@
   display: flex;
   align-items: flex-start;
   gap: 5px;
-  padding: 1rem 0 0 0;
+  padding: 0.75rem 0;
   color: var(--color);
 
   --icon-size: 18px;

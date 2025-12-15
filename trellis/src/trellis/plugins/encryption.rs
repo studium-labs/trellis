@@ -115,7 +115,7 @@ impl Transformer for EncryptContent {
         page.html = Some(format!(
             r#"<div class="encrypted-note" data-ciphertext="{ciphertext}" data-salt="{salt}" data-nonce="{nonce}" data-iterations="{iterations}" data-algo="AES-256-GCM" data-kdf="PBKDF2-SHA256" data-version="1">
   <div class="encrypted-note__chrome">
-    <div class="encrypted-note__status">Protected note · Enter the password to decrypt locally.</div>
+    <div class="encrypted-note__status">Protected (AES-256-GCM) · Enter the password to decrypt locally.</div>
     <form class="encrypted-note__form" novalidate>
       <div class="encrypted-note__field">
         <input class="encrypted-note__input" type="password" name="password" autocomplete="current-password" placeholder=" " required />

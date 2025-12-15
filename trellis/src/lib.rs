@@ -1,16 +1,16 @@
-pub mod handlers;
-pub mod trellis;
-use std::{env, io};
+mod handlers;
+mod trellis;
 
-use actix_cors::Cors;
-use actix_web::{App, HttpServer, http::header, middleware::Logger, web};
-use handlebars::Handlebars;
 use log::info;
-
-use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
 use std::ffi::OsStr;
 use std::fs;
 use std::path::Path;
+use std::{env, io};
+
+use actix_cors::Cors;
+use actix_web::{App, HttpServer, http::header, web};
+use handlebars::Handlebars;
+use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
 use tokio::fs::File;
 use walkdir::WalkDir;
 
@@ -18,33 +18,24 @@ use crate::trellis::config::SiteConfig;
 
 pub async fn run() -> io::Result<()> {
     let config = SiteConfig::load();
-    let server_cfg = config.server.clone();
-
-    info!(
-        "Trellis is listening on: http://{}:{}",
-        server_cfg.host, server_cfg.port
-    );
-    // Build the shared Handlebars registry once for all workers.
-    let handlebars = build_handlebars();
-
+    let server_cfg = config.server;
     let pool = get_db_pool()
         .await
-        .expect("unable to connect to sqlite db!");
+        .expect("Unable to create or load existing sqlite database!");
+
+    // Configure max file upload size and CORS
     let max_bytes = server_cfg.max_payload_bytes();
     let cors_origins = server_cfg.cors_origins.clone();
 
     HttpServer::new(move || {
-        // Set payload limit based on configuration (affects multipart and others)
         App::new()
-            .wrap(Logger::default())
-            .app_data(web::Data::new(pool.clone()))
-            .app_data(web::Data::new(handlebars.clone()))
             .app_data(web::PayloadConfig::new(max_bytes))
-            // .app_data(web::Data::new())
+            .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(build_handlebars()))
             .wrap(build_cors(&cors_origins))
             .configure(handlers::config)
     })
-    .bind((server_cfg.host.as_str(), server_cfg.port))?
+    .bind((server_cfg.host, server_cfg.port))?
     .run()
     .await
 }
@@ -61,15 +52,12 @@ fn build_cors(origins: &[String]) -> Cors {
     let cors = origins
         .iter()
         .fold(base, |c, origin| c.allowed_origin(origin));
-
-    // Maintain previous behavior of allowing credentials when specific origins are set.
     cors.supports_credentials()
 }
 
 fn build_handlebars() -> Handlebars<'static> {
     let mut handlebars = Handlebars::new();
-
-    // Register every .hbs file under ./api/templates so they are all available to handlers.
+    // Register every .hbs file in `templates/`` so they are available
     let templates_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
 
     for entry in WalkDir::new(&templates_dir)
@@ -85,7 +73,7 @@ fn build_handlebars() -> Handlebars<'static> {
         let name = rel_no_ext.to_string_lossy().replace('\\', "/");
 
         if rel.parent().map(|p| p == Path::new("")).unwrap_or(true) {
-            // top-level templates (e.g., index, page, feed)
+            // top-level templates. e.g. index, page
             let stem = rel_no_ext
                 .file_name()
                 .and_then(|s| s.to_str())
@@ -102,26 +90,21 @@ fn build_handlebars() -> Handlebars<'static> {
                 .unwrap_or_else(|e| panic!("failed to register partial {}: {}", name, e));
         }
     }
-
     handlebars
 }
 
 pub async fn get_db_pool() -> anyhow::Result<SqlitePool> {
-    // Allow override via env (works for deployments that supply DATABASE_URL)
-    let url = env::var("DATABASE_URL")
-        .or_else(|_| env::var("TRELLIS_DATABASE_URL"))
-        .unwrap_or_else(|_| {
-            let mut path = env::current_dir().expect("cwd");
-            path.push("trellis.db");
-            // SQLx expects three slashes for an absolute path (sqlite:///...)
-            // otherwise it treats it as relative and the connection can fail.
-            path.display().to_string()
-        });
-    let uri = format!("sqlite://{}", &url);
+    // Override database path via .env
+    let url = env::var("DATABASE_URL").unwrap_or_else(|_| {
+        let mut path = env::current_dir().expect("cwd");
+        path.push("trellis.db");
+        path.display().to_string()
+    });
 
+    let uri = format!("sqlite://{}", &url);
     let db_path = std::path::PathBuf::from(&url);
-    // If we're pointing at a file-based SQLite DB, ensure the file exists
-    // so SQLx doesn't return code 14 ("unable to open database file").
+
+    // Ensure the directories exist and create db if missing
     if let Some(parent) = db_path.parent() {
         if !parent.exists() {
             tokio::fs::create_dir_all(parent).await?;
@@ -131,7 +114,7 @@ pub async fn get_db_pool() -> anyhow::Result<SqlitePool> {
         File::create(&db_path).await?;
     }
 
-    info!("Opening SQLite at {}", &uri);
+    info!("Loading Trellis sqlite database: {}", &uri);
     let pool = SqlitePoolOptions::new().connect(&uri).await?;
     Ok(pool)
 }

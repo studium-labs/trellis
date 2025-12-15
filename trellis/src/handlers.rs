@@ -13,7 +13,7 @@ use std::fs;
 
 use crate::trellis::bundler::{InlineScripts, ScriptNeeds, inline_scripts};
 use crate::trellis::config::google_font_href;
-use crate::trellis::content_index::generate_content_index;
+use crate::trellis::content_index::{extract_links, generate_content_index};
 use crate::trellis::layout::LayoutComponent;
 use crate::trellis::styles::compiled_styles;
 use crate::trellis::types::{RenderedPage, slug_from_path};
@@ -149,6 +149,7 @@ struct HomeContext<'a> {
     article: ArticleContext,
     explorer: ExplorerContext,
     graph: GraphContext,
+    backlinks: BacklinksContext,
     layout: LayoutContext<'a>,
     configuration: &'a SiteConfig,
     styles: String,
@@ -178,6 +179,22 @@ struct GraphContext {
     title: String,
     local_cfg_json: String,
     global_cfg_json: String,
+}
+
+#[derive(Serialize, Clone)]
+struct BacklinkEntry {
+    title: String,
+    slug: String,
+    href: String,
+}
+
+#[derive(Serialize, Clone)]
+struct BacklinksContext {
+    title: String,
+    items: Vec<BacklinkEntry>,
+    empty_text: String,
+    hide_when_empty: bool,
+    has_backlinks: bool,
 }
 
 #[derive(Serialize)]
@@ -217,7 +234,12 @@ struct LayoutContext<'a> {
 fn script_needs(page: &RenderedPage, layout: &LayoutContext) -> ScriptNeeds {
     let html = &page.html;
     let has_mermaid = html.contains("class=\"mermaid\"");
-    let has_callouts = html.contains("class=\"callout\"");
+    let has_callouts = html.contains("class=\"callout ");
+    println!("{html}");
+    println!(
+        "script_needs: callout -> {}, mermaid -> {}",
+        has_callouts, has_mermaid
+    );
     let encrypted = page.frontmatter.encrypted.unwrap_or(false);
     let has_explorer = layout_contains_explorer(layout);
     let has_graph = layout_contains_graph(layout);
@@ -259,7 +281,6 @@ fn component_has_explorer(component: &LayoutComponent) -> bool {
         LayoutComponent::MobileOnly(inner) | LayoutComponent::DesktopOnly(inner) => {
             component_has_explorer(inner)
         }
-        LayoutComponent::ConditionalRender(cond) => component_has_explorer(&cond.component),
         _ => false,
     }
 }
@@ -291,7 +312,6 @@ fn component_has_graph(component: &LayoutComponent) -> bool {
         LayoutComponent::MobileOnly(inner) | LayoutComponent::DesktopOnly(inner) => {
             component_has_graph(inner)
         }
-        LayoutComponent::ConditionalRender(cond) => component_has_graph(&cond.component),
         _ => false,
     }
 }
@@ -303,6 +323,7 @@ fn build_home_context<'a>(engine: &'a TrellisEngine, page: RenderedPage) -> Home
     let fonts_href = google_font_href(&engine.config.configuration.theme);
     let footer = footer_context(&engine.config);
     let graph = graph_context();
+    let backlinks = backlinks_context(engine, &article.slug);
 
     let layout_ctx = LayoutContext {
         shared: &engine.shared_layout,
@@ -320,6 +341,7 @@ fn build_home_context<'a>(engine: &'a TrellisEngine, page: RenderedPage) -> Home
         article,
         explorer: explorer_context(&engine.config),
         graph,
+        backlinks,
         layout: layout_ctx,
         configuration: &engine.config,
         styles,
@@ -407,6 +429,83 @@ fn graph_context() -> GraphContext {
     }
 }
 
+fn backlinks_context(engine: &TrellisEngine, current_slug: &str) -> BacklinksContext {
+    let content_root = engine.content_root();
+    let ignore_patterns = &engine.config.configuration.ignore_patterns;
+    let targets = backlink_targets(current_slug);
+
+    let mut items = Vec::new();
+
+    for entry in WalkDir::new(content_root)
+        .into_iter()
+        .filter_entry(|e| !is_ignored(e.path(), content_root, ignore_patterns))
+        .filter_map(Result::ok)
+        .filter(|e| e.path().is_file())
+    {
+        if entry
+            .path()
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|ext| ext.eq_ignore_ascii_case("md"))
+            != Some(true)
+        {
+            continue;
+        }
+
+        let source_slug = slug_from_path(entry.path(), content_root);
+        if source_slug == current_slug {
+            continue;
+        }
+
+        let Ok(content) = fs::read_to_string(entry.path()) else {
+            continue;
+        };
+
+        let links = extract_links(&content);
+        if !links.iter().any(|link| targets.contains(link)) {
+            continue;
+        }
+
+        let mut backlink_slug = source_slug.clone();
+        if backlink_slug.ends_with("/index") {
+            backlink_slug.truncate(backlink_slug.len() - "/index".len());
+        }
+
+        let href = if backlink_slug.is_empty() || backlink_slug == "index" {
+            "/".to_string()
+        } else {
+            format!("/{}", backlink_slug)
+        };
+
+        let title = frontmatter_title(entry.path()).unwrap_or_else(|| {
+            humanize_segment(
+                backlink_slug
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(&backlink_slug),
+            )
+        });
+
+        items.push(BacklinkEntry {
+            title,
+            slug: backlink_slug,
+            href,
+        });
+    }
+
+    items.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
+    let has_backlinks = !items.is_empty();
+    let cfg = &engine.config.layout.backlinks;
+
+    BacklinksContext {
+        title: cfg.title.clone(),
+        items,
+        empty_text: cfg.empty_text.clone(),
+        hide_when_empty: cfg.hide_when_empty,
+        has_backlinks,
+    }
+}
+
 fn footer_context(config: &SiteConfig) -> FooterContext {
     let links = links_from_config(&config.layout.footer.links);
     FooterContext {
@@ -430,6 +529,58 @@ fn links_from_config(links: &BTreeMap<String, String>) -> Option<Vec<FooterLink>
             })
             .collect(),
     )
+}
+
+fn backlink_targets(slug: &str) -> Vec<String> {
+    let mut targets = Vec::new();
+    let mut normalized = slug.trim_matches('/').to_string();
+    if normalized.is_empty() {
+        normalized = "index".into();
+    }
+
+    let mut push_unique = |value: String| {
+        if !targets.contains(&value) {
+            targets.push(value);
+        }
+    };
+
+    push_unique(normalized.clone());
+
+    if let Some(stripped) = normalized.strip_suffix("/index") {
+        push_unique(stripped.to_string());
+    }
+
+    if normalized == "index" {
+        push_unique(".".into());
+    }
+
+    targets
+}
+
+fn frontmatter_title(path: &Path) -> Option<String> {
+    let content = fs::read_to_string(path).ok()?;
+    let mut lines = content.lines();
+    if lines.next()? != "---" {
+        return None;
+    }
+
+    let mut fm = Vec::new();
+    for line in lines {
+        if line.trim() == "---" {
+            break;
+        }
+        fm.push(line);
+    }
+    if fm.is_empty() {
+        return None;
+    }
+
+    let yaml = fm.join("\n");
+    serde_yaml::from_str::<serde_yaml::Value>(&yaml)
+        .ok()?
+        .get("title")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
 }
 
 fn is_false(b: &bool) -> bool {
@@ -553,32 +704,6 @@ fn compute_nav(content_root: &Path, ignore_patterns: &[String]) -> Vec<NavItem> 
 
     let humanize = |slug: &str| humanize_segment(slug.rsplit('/').next().unwrap_or(slug));
 
-    let read_frontmatter_title = |path: &Path| -> Option<String> {
-        let content = fs::read_to_string(path).ok()?;
-        let mut lines = content.lines();
-        if lines.next()? != "---" {
-            return None;
-        }
-
-        let mut fm = Vec::new();
-        for line in lines {
-            if line.trim() == "---" {
-                break;
-            }
-            fm.push(line);
-        }
-        if fm.is_empty() {
-            return None;
-        }
-
-        let yaml = fm.join("\n");
-        serde_yaml::from_str::<serde_yaml::Value>(&yaml)
-            .ok()?
-            .get("title")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-    };
-
     let title_for = |slug: &str, is_folder: bool| -> String {
         let path = if is_folder {
             content_root.join(slug).join("index.md")
@@ -586,7 +711,7 @@ fn compute_nav(content_root: &Path, ignore_patterns: &[String]) -> Vec<NavItem> 
             content_root.join(slug).with_extension("md")
         };
 
-        read_frontmatter_title(&path).unwrap_or_else(|| humanize(slug))
+        frontmatter_title(&path).unwrap_or_else(|| humanize(slug))
     };
 
     for (group, mut children) in groups {

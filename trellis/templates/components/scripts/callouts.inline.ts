@@ -13,7 +13,7 @@ function toggleCallout(this: HTMLElement, evt: MouseEvent) {
 }
 
 function setupCallout(): void {
-  const collapsible = document.getElementsByClassName("callout is-collapsible");
+  const collapsible = document.getElementsByClassName("callout");
   for (const div of collapsible) {
     const title = div.getElementsByClassName("callout-title")[0] as
       | HTMLElement
@@ -24,11 +24,14 @@ function setupCallout(): void {
     if (!title || !content) continue;
 
     title.addEventListener("click", toggleCallout);
-    window.addCleanup?.(() => title.removeEventListener("click", toggleCallout));
+    window.addCleanup?.(() =>
+      title.removeEventListener("click", toggleCallout)
+    );
 
     const collapsed = div.classList.contains("is-collapsed");
     content.style.gridTemplateRows = collapsed ? "0fr" : "1fr";
   }
 }
-
-document.addEventListener("nav", setupCallout);
+window.onload = () => {
+  setupCallout();
+};

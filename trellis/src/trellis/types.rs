@@ -49,12 +49,6 @@ impl Page {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Default)]
-pub struct PageContext {
-    pub slug: Option<String>,
-    pub display_class: Option<String>,
-}
-
 #[derive(Clone, Debug, Serialize)]
 pub struct RenderedPage {
     pub slug: String,
@@ -66,10 +60,7 @@ pub struct RenderedPage {
 
 impl From<Page> for RenderedPage {
     fn from(mut page: Page) -> Self {
-        let html = page
-            .html
-            .take()
-            .unwrap_or_else(|| String::from("<p>No content</p>"));
+        let html = page.html.take().unwrap_or_else(|| String::new());
 
         RenderedPage {
             slug: page.slug,

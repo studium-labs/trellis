@@ -236,11 +236,6 @@ fn script_needs(page: &RenderedPage, layout: &LayoutContext) -> ScriptNeeds {
     let html = &page.html;
     let has_mermaid = html.contains("class=\"mermaid\"");
     let has_callouts = html.contains("class=\"callout ");
-    println!("{html}");
-    println!(
-        "script_needs: callout -> {}, mermaid -> {}",
-        has_callouts, has_mermaid
-    );
     let encrypted = page.frontmatter.encrypted.unwrap_or(false);
     let has_explorer = layout_contains_explorer(layout);
     let has_graph = layout_contains_graph(layout);
@@ -479,12 +474,7 @@ fn backlinks_context(engine: &TrellisEngine, current_slug: &str) -> BacklinksCon
         };
 
         let title = frontmatter_title(entry.path()).unwrap_or_else(|| {
-            humanize_segment(
-                backlink_slug
-                    .rsplit('/')
-                    .next()
-                    .unwrap_or(&backlink_slug),
-            )
+            humanize_segment(backlink_slug.rsplit('/').next().unwrap_or(&backlink_slug))
         });
 
         items.push(BacklinkEntry {

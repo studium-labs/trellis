@@ -8,13 +8,13 @@ tags:
 
 A garden for your mind? Don't mind if I do...
 
-- ### [Setup Guide](./setup-guide)
-- ### [Publishing to the World Wide Web](./hosting)
-- ### [Roadmap and Changelog](./roadmap-and-changelog)
+- ### [Setup Guide](../setup-guide)
+- ### [Publishing to the World Wide Web](../hosting)
+- ### [Roadmap and Changelog](../roadmap-and-changelog)
 
 # Heading #1
 
-Blah blah...
+Bla...
 
 ## Heading #2
 
@@ -34,9 +34,11 @@ Blah blah blah blah blah...
 
 ###### Heading 6
 
-Blah blah blah Blah blah blah...
+Blah blah blah Blah blah bla...
 
-A mermaid diagram!!
+---
+
+> [!info] A Mermaid diagram visualized
 
 ```mermaid
 flowchart TD
@@ -76,6 +78,49 @@ flowchart TD
     class DM decison_maker
     linkStyle 0 fill:none,stroke:none;
 ```
+
+> [!info]- Mermaid code for the diagram above.
+>
+> ````
+>     flowchart TD
+>
+>         %% Title above the semi-autonomous region
+>         UE@{ shape: trap-t, label: "Unexpected event in unpredictable environment" }
+>
+>         UE --> DMSR
+>         subgraph DMSR[Decision maker - system relationship]
+>
+>     %% Core elements
+>     H[Human operator]
+>     M[Machine]
+>     C[Automated]
+>     D[Semi-Autonomous]
+>     E[Autonomous]
+>
+>             %% Structure
+>
+>             H --> C
+>             H --> D
+>             M --> D
+>             M --> E
+>
+>         end
+>         %% Class definitions
+>         classDef human fill:#b30000,color:white,stroke:#000
+>         classDef machine fill:#003366,color:white,stroke:#000
+>         classDef automated fill:#999999,color:white,stroke:#000
+>         classDef semiauto fill:#6bb36b,color:black,stroke:#000
+>         classDef autonomous fill:#f7c97b,color:black,stroke:#000
+>         classDef decison_maker fill:transparent,stroke: transparent;
+>         %% Apply styles
+>         class H human
+>         class M machine
+>         class C automated
+>         class D semiauto
+>         class E autonomous
+>         class DM decison_maker
+>         linkStyle 0 fill:none,stroke:none;```
+> ````
 
 Callouts can be used to improve scannability and retention without diluting your content.
 
@@ -266,3 +311,7 @@ Listing letters and numbers in lists:
 I love quotes:
 
 > normal quote
+
+```
+
+```

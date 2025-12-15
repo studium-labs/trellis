@@ -22,11 +22,8 @@ Check them out to learn who/what inspired me to build the Rust version: https://
 
 ## Latest Release
 
-### Version 0.24.0
+### Version 0.25.0
 
-> A universal language.
+> You can't put a price tag on preparation.
 
-- Fixed collapsible callout (`> [!cite]-`) TypeScript code
-- Added backlinks component.
-- Added page tags.
-- Added [gemoji shortcodes](https://www.webfx.com/tools/emoji-cheat-sheet/) with the `emojis` crate.
+- Add tag page for viewing other pages with same tag.

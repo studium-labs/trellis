@@ -8,7 +8,7 @@ tags:
 ---
 
 > [!hint]- **Trellis Roadmap**
-> The following feature ideas are listed in no particular order and **may or may not be** eventually _completed_.
+> The following feature ideas are listed in no particular order and **may or may not be** _eventually_ completed.
 >
 > - Support all default Quartz features (https://quartz.jzhao.xyz/)
 > - Built-in Themes support.
@@ -108,6 +108,12 @@ tags:
 - Added table of contents
 - Added page margin comments. -->
 
+### Version 0.25.0
+
+> You can't put a price tag on preparation.
+
+- Add tag page for viewing other pages with same tag.
+
 ### Version 0.24.0
 
 > A universal language.
@@ -123,7 +129,7 @@ tags:
 
 - Added graph view.
 - Fixed chevron icon flashing on URL change.
-- Ported JavaScript to TypeScript compiled server-side via SWC then cached in memory
+- Ported JavaScript to TypeScript compiled server-side via SWC then cached.
 
 ### Version 0.1.0
 

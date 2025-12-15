@@ -15,8 +15,10 @@ use crate::trellis::bundler::{InlineScripts, ScriptNeeds, inline_scripts};
 use crate::trellis::config::google_font_href;
 use crate::trellis::content_index::{extract_links, generate_content_index};
 use crate::trellis::layout::LayoutComponent;
+use crate::trellis::plugins::frontmatter::FrontMatter;
+use crate::trellis::plugins::traits::Transformer;
 use crate::trellis::styles::compiled_styles;
-use crate::trellis::types::{RenderedPage, slug_from_path};
+use crate::trellis::types::{Page, PageMetadata, RenderedPage, slug_from_path};
 use crate::trellis::{SiteConfig, TrellisEngine, trellis_engine};
 
 use chrono::{Datelike, Utc};
@@ -46,6 +48,14 @@ pub fn config(conf: &mut web::ServiceConfig) {
 
     let site_scope = web::scope("")
         .service(feed_handler)
+        .route(
+            "/tags/{tag}",
+            web::get().to(
+                move |path: web::Path<String>, hb: web::Data<Handlebars<'static>>| async move {
+                    tags_handler(path, hb).await
+                },
+            ),
+        )
         // Catch-all route keeps in sync with content changes without restart
         .route(
             "/{slug:.*}",
@@ -114,6 +124,32 @@ pub async fn feed_handler(hb: web::Data<Handlebars<'static>>) -> impl Responder 
     )
 }
 
+async fn tags_handler(
+    path: web::Path<String>,
+    hb: web::Data<Handlebars<'static>>,
+) -> impl Responder {
+    let tag = path.into_inner().trim().to_string();
+    let engine = trellis_engine();
+    let posts = pages_with_tag(engine, &tag);
+    let body = render_tag_list_html(&tag, &posts);
+
+    let mut meta = PageMetadata::default();
+    meta.title = Some(format!("Tag: {}", tag));
+    meta.description = Some(format!("Pages tagged with {}", tag));
+    meta.tags = Some(vec![tag.clone()]);
+    meta.word_count = Some(body.split_whitespace().count() as u64);
+
+    let page = RenderedPage {
+        slug: format!("tags/{}", tag),
+        html: body,
+        frontmatter: meta,
+        cached: Some(false),
+    };
+
+    let ctx = build_home_context(engine, page);
+    render(hb, "page", json!(ctx), HttpResponse::Ok())
+}
+
 fn render(
     hb: web::Data<Handlebars<'static>>,
     template: &str,
@@ -124,6 +160,151 @@ fn render(
         Ok(body) => builder.content_type("text/html; charset=utf-8").body(body),
         Err(err) => HttpResponse::InternalServerError().body(format!("Template error: {}", err)),
     }
+}
+
+#[derive(Clone)]
+struct TagResult {
+    slug: String,
+    title: String,
+    description: Option<String>,
+    created: Option<String>,
+}
+
+fn pages_with_tag(engine: &TrellisEngine, tag: &str) -> Vec<TagResult> {
+    let content_root = engine.content_root();
+    let ignore_patterns = &engine.config.configuration.ignore_patterns;
+    let mut results = Vec::new();
+
+    for entry in WalkDir::new(content_root)
+        .into_iter()
+        .filter_entry(|e| !is_ignored(e.path(), content_root, ignore_patterns))
+        .filter_map(Result::ok)
+        .filter(|e| e.path().is_file())
+    {
+        if entry
+            .path()
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|ext| ext.eq_ignore_ascii_case("md"))
+            != Some(true)
+        {
+            continue;
+        }
+
+        // Skip generated tag pages themselves if present in content tree.
+        if entry
+            .path()
+            .strip_prefix(content_root)
+            .ok()
+            .and_then(|p| p.to_str())
+            .map(|p| p.starts_with("tags/"))
+            .unwrap_or(false)
+        {
+            continue;
+        }
+
+        let slug = slug_from_path(entry.path(), content_root);
+        let content = match fs::read_to_string(entry.path()) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        let mut page = Page::new(slug.clone(), entry.path().to_path_buf(), content);
+        let Ok(frontmatter_page) = FrontMatter.transform(page) else {
+            continue;
+        };
+        page = frontmatter_page;
+
+        let tags = page.frontmatter.tags.clone().unwrap_or_default();
+        if !tags.iter().any(|t| t.eq_ignore_ascii_case(tag)) {
+            continue;
+        }
+
+        let title = page
+            .frontmatter
+            .title
+            .clone()
+            .unwrap_or_else(|| slug.rsplit('/').next().unwrap_or(&slug).replace('-', " "));
+        let description = page.frontmatter.description.clone();
+        let created = page
+            .frontmatter
+            .created
+            .map(|d| d.format("%Y-%m-%d").to_string());
+
+        results.push(TagResult {
+            slug,
+            title,
+            description,
+            created,
+        });
+    }
+
+    results.sort_by(|a, b| {
+        match (b.created.as_ref(), a.created.as_ref()) {
+            (Some(bc), Some(ac)) => bc.cmp(ac),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        }
+        .then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase()))
+    });
+
+    results
+}
+
+fn render_tag_list_html(tag: &str, pages: &[TagResult]) -> String {
+    let mut html = String::new();
+    let total_tag_links = pages.len();
+
+    html.push_str(&format!(
+        "<h2><span>{}</span> Posts tagged \"{}\"</h2>",
+        total_tag_links,
+        escape_html(tag)
+    ));
+
+    if pages.is_empty() {
+        html.push_str("<p>No pages found with this tag.</p>");
+        return html;
+    }
+
+    html.push_str("<ul class=\"tag-results\">");
+    for page in pages {
+        let href = if page.slug == "index" {
+            "/".to_string()
+        } else {
+            format!("/{}", page.slug)
+        };
+        html.push_str("<li class=\"tag-result\">");
+        html.push_str(&format!(
+            "<a class=\"internal\" href=\"{}\">{}</a>",
+            href,
+            escape_html(&page.title)
+        ));
+        if let Some(created) = &page.created {
+            html.push_str(&format!(
+                "<span class=\"tag-result-date\"> — {}</span>",
+                created
+            ));
+        }
+        if let Some(desc) = &page.description {
+            html.push_str(&format!(
+                "<div class=\"tag-result-intro\">{}</div>",
+                escape_html(desc)
+            ));
+        }
+        html.push_str("</li>");
+    }
+    html.push_str("</ul>");
+    html
+}
+
+fn escape_html(input: &str) -> String {
+    input
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
 }
 
 #[derive(Serialize, Clone)]

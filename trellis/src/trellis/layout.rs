@@ -263,6 +263,7 @@ pub fn default_list_page_layout() -> PageLayout {
             LayoutComponent::Breadcrumbs,
             LayoutComponent::ArticleTitle,
             LayoutComponent::ContentMeta,
+            LayoutComponent::TagList,
         ],
         left: vec![
             LayoutComponent::PageTitle,

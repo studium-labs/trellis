@@ -220,6 +220,7 @@ struct ArticleContext {
     updated: String,
     read_time: String,
     body: String,
+    tags: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     html: Option<String>,
 }
@@ -816,6 +817,7 @@ fn to_article(page: &RenderedPage) -> ArticleContext {
             ((words as f64) / 200.0).ceil().max(1.0) as u32
         ),
         body: page.html.to_owned(),
+        tags: page.frontmatter.tags.unwrap_or_default(),
         html: Some(page.html.clone()),
     }
 }

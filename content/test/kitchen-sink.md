@@ -1,5 +1,7 @@
 ---
 title: Mother of All Sinks
+tags:
+  - Kitchen Sink
 ---
 
 # Welcome to Trellis

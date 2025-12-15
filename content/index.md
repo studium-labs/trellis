@@ -1,5 +1,9 @@
 ---
 title: "Digital Gardening for Your Mind"
+tags:
+  - the
+  - Quick
+
 ---
 
 # Welcome to Trellis

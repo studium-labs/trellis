@@ -26,4 +26,4 @@ Check them out to learn who/what inspired me to build the Rust version: https://
 
 > You can't put a price tag on preparation.
 
-- Add tag page for viewing other pages with same tag.
+- Added tag page for viewing other pages with same tag.

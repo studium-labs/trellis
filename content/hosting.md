@@ -6,14 +6,14 @@ Trellis effectively turns your Markdown files and other resources into a bundle 
 
 If you want to publish your site to the world, you need a way to host it online. This guide details how to deploy your website to the world wide web. Any service that allows you to deploy static HTML should work as well.
 
-## Nginx VPS
+## Nginx
 
 TODO...
 
-## Github Pages
+## Github
 
 TODO...
 
-## Cloudflare Pages
+## Cloudflare
 
 TODO...

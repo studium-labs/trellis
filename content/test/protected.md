@@ -17,3 +17,5 @@ P.S. Here are some quotes I like:
 
 > [!cite] Strange how certain arrangements of words sear themselves into your mind...
 > Then they wait. A day or a decade later, like a song you catch yourself humming, you realize those words have been quietly shaping your beliefs, your actions, your identity.
+
+- ### [The Mother of All Kitchen Sinks](./kitchen-sink)

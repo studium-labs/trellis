@@ -3,6 +3,7 @@ pub mod encryption;
 pub mod frontmatter;
 pub mod markdown;
 pub mod mermaid;
+pub mod emojicode;
 pub mod traits;
 
 use anyhow::Result;

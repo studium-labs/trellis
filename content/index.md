@@ -3,12 +3,11 @@ title: "Digital Gardening for Your Mind"
 tags:
   - the
   - Quick
-
 ---
 
-# Welcome to Trellis
+# :potted_plant: Welcome to Trellis
 
-A garden for your mind? Don't mind if I do...
+A garden for your mind? Don't mind if I do.. :herb:
 
 - ### [Setup Guide](./setup-guide)
 - ### [Publishing to the World Wide Web](./hosting)

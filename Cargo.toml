@@ -59,3 +59,4 @@ swc_common = "18.0.1"
 swc_ecma_loader = { version = "18.0.0", features = ["cache"] }
 swc_ecma_transforms_typescript = "35.0.0"
 notify = "8.2.0"
+emojis = "0.8.0"

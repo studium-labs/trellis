@@ -53,3 +53,4 @@ notify = { workspace = true }
 swc_atoms = { workspace = true }
 swc_ecma_visit = { workspace = true }
 swc_ecma_transforms_typescript = { workspace = true }
+emojis = { workspace = true }

@@ -99,19 +99,23 @@ tags:
 > - Markpress support[.](https://github.com/gamell/markpress)
 > - Temporal views
 
-## Released
+## Releases
 
 <!-- ### Version 0.3.0
+- Added footnotes
+- Added task lists & tasks overview page
+- Added LaTeX/KaTeX equations
+- Added table of contents
+- Added page margin comments. -->
+
+### Version 0.24.0
+
+> A universal language.
 
 - Fixed collapsible callout (`> [!cite]-`) TypeScript code
 - Added backlinks component.
 - Added page tags.
-- Added emoji shortcodes.
-- Added page margin comments.
-- Added footnotes
-- Added task lists & tasks overview page
-- Added LaTeX/KaTeX equations
-- Added table of contents -->
+- Added [gemoji shortcodes](https://www.webfx.com/tools/emoji-cheat-sheet/) with the `emojis` crate.
 
 ### Version 0.2.0
 

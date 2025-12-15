@@ -22,10 +22,11 @@ Check them out to learn who/what inspired me to build the Rust version: https://
 
 ## Latest Release
 
-### Version 0.2.0
+### Version 0.24.0
 
-> Change the graph, change the world.
+> A universal language.
 
-- Added graph view.
-- Fixed chevron icon flashing on URL change.
-- Ported JavaScript to TypeScript compiled by SWC
+- Fixed collapsible callout (`> [!cite]-`) TypeScript code
+- Added backlinks component.
+- Added page tags.
+- Added [gemoji shortcodes](https://www.webfx.com/tools/emoji-cheat-sheet/) with the `emojis` crate.
